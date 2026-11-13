@@ -38,7 +38,7 @@ class ClientError(Exception):
     """Safe diagnostic identifier only; never include request/response or credential text."""
 
 
-def canonical_origin(value: str) -> str:
+def canonical_origin(value: str, *, allow_remote_http: bool = False) -> str:
     try:
         if any(ord(character) <= 32 for character in value) or "\\" in value:
             raise ValueError
@@ -60,7 +60,7 @@ def canonical_origin(value: str) -> str:
         loopback = hostname == "localhost"
         with suppress(ValueError):
             loopback = loopback or ipaddress.ip_address(hostname).is_loopback
-        if parsed.scheme == "http" and not loopback:
+        if parsed.scheme == "http" and not loopback and not allow_remote_http:
             raise ClientError("REMOTE_CONNECTION_REQUIRES_HTTPS")
         host = "[" + hostname + "]" if ":" in hostname else hostname
         default_port = 80 if parsed.scheme == "http" else 443
@@ -90,8 +90,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Transport:
-    def __init__(self, origin: str, *, timeout: float = 30):
-        self.origin = canonical_origin(origin)
+    def __init__(self, origin: str, *, timeout: float = 30, allow_remote_http: bool = False):
+        self.origin = canonical_origin(origin, allow_remote_http=allow_remote_http)
         self.timeout = timeout
         # Never forward a user's credentials through an implicit environment-configured proxy.
         # HTTPSHandler uses certificate verification; no insecure override is offered.
@@ -290,13 +290,14 @@ class NativeClient:
         *,
         state_dir: Path | None = None,
         transport: Transport | None = None,
+        allow_remote_http: bool = False,
         session_store=None,
         client_name: str = "AcadeMate Paper CLI",
         device_name: str = "CLI container",
     ):
-        self.origin = canonical_origin(origin)
+        self.origin = canonical_origin(origin, allow_remote_http=allow_remote_http)
         self.account = account.strip().casefold()
-        self.transport = transport or Transport(self.origin)
+        self.transport = transport or Transport(self.origin, allow_remote_http=allow_remote_http)
         if self.transport.origin != self.origin:
             raise ClientError("TRANSPORT_ORIGIN_MISMATCH")
         self.state_dir = state_dir or Path.home() / ".local/state/academatepaper-client"

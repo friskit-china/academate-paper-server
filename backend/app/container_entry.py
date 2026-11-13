@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 
 from app.server import SERVER_DEFAULTS, apply_server_defaults
-from app.server_https import any_host_enabled, authority, https_origins
+from app.server_https import any_host_enabled, https_origins, listener_ports, supports_any_host
 
 KEYS = ("INTERNAL_SERVICE_TOKEN", "CREDENTIAL_INSTALLATION_ID", "CREDENTIAL_MASTER_KEY_B64")
 MODULES = {
@@ -46,11 +46,15 @@ def apply_container_network(environment: MutableMapping[str, str], *, initialize
     # In particular, a later "docker exec ... setup" starts with the image's plain
     # environment and needs to issue a link for the same origin as the supervisor.
     marker = root / ".amp-default-https"
+    any_host_marker = root / ".amp-default-any-host"
     if initialize and not marker.exists() and not (root / ".amp-instance.json").exists():
         database = root / "database/workspace.sqlite3"
         url = make_url(environment.get("DATABASE_URL", f"sqlite:///{database}"))
         if (not database.exists() and url.get_backend_name() == "sqlite"
                 and url.database and not Path(url.database).exists()):
+            # Keep the HTTPS marker understood by older images. Their existing
+            # volumes lack the new marker and retain their original named routes.
+            any_host_marker.touch(mode=0o600, exist_ok=True)
             marker.touch(mode=0o600, exist_ok=True)
     tls_inputs = any(environment.get(name) for name in (
         "SERVER_HTTPS_MODE", "SERVER_HTTPS_CERT_FILE", "SERVER_HTTPS_KEY_FILE",
@@ -71,9 +75,11 @@ def apply_container_network(environment: MutableMapping[str, str], *, initialize
     environment["WEB_PUBLIC_ORIGIN"] = web
     if api:
         environment["SERVER_HTTPS_API_ORIGIN"] = api
+        if (not environment.get("SERVER_HTTPS_ANY_HOST") and any_host_marker.is_file()
+                and supports_any_host(environment)):
+            environment["SERVER_HTTPS_ANY_HOST"] = "true"
         web_origins, api_origins = https_origins(environment)
-        reserved = {authority(origin)[1] for origin in web_origins + api_origins}
-        _select_private_ports(environment, reserved)
+        _select_private_ports(environment, listener_ports(web_origins + api_origins))
         # A pre-0.1.2 installation without supplied PEMs used Caddy's automatic
         # issuer. Keep its trusted certificates on recreation with the same origins.
         if not marker.is_file() and not tls_inputs:

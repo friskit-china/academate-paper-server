@@ -4,6 +4,8 @@ AcadeMate Paper Server 是可自行部署的个人论文服务器。你可以从
 
 ## 部署
 
+新安装默认在所有可用网络接口提供 HTTPS，Web 端口为 `8443`，原生 App 的 API 端口为 `9443`。在服务器本机可用 `127.0.0.1`；在其他设备使用能到达服务器的 IP 或域名。例如服务器名为 `paper` 时，浏览器打开 `https://paper:8443`，App 填写 `https://paper:9443`。服务按端口区分 Web 与 API，新增访问地址无需登记。
+
 克隆仓库并进入源码目录，或下载源码压缩包后解压。以下命令均从仓库根目录执行。
 
 ```sh
@@ -19,7 +21,7 @@ cd academate-paper-server
 ./deploy/native-install/install.sh
 ```
 
-安装完成后，按下文「信任实例根证书」将根证书加入本机信任库，再打开终端打印的一次性 HTTPS 设置链接，设置至少 12 个字符的密码。个人账号固定为 `admin`，之后登录只需密码。使用默认设置时，Web 地址为 `https://127.0.0.1:8443`，原生客户端连接 `https://127.0.0.1:9443`。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。
+安装完成后，将下文的实例根证书加入浏览器的信任库，打开安装向导打印的一次性 HTTPS 链接，为个人账号 `admin` 设置至少 12 个字符的密码。以后登录只需密码。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。
 
 向导默认将 `amp` 链接放在 `~/.local/bin`。若终端找不到该命令，可将这个目录加入当前 shell 的 PATH。
 
@@ -40,12 +42,20 @@ amp status
 
 ### Docker 单容器
 
-安装 Docker 并启动引擎后，从源码构建镜像，再用具名卷 `acade-paper-data` 保存数据库、论文和实例密钥。以下命令把 Web 和 API 端口绑定到宿主机回环地址。
+在仓库根目录启动 Docker Compose。它从源码构建镜像，创建 `acade-paper` 容器，在宿主网络接口发布 Web 和 API，并用 `acade-paper-data` 卷保存实例数据。
+
+```sh
+docker compose up -d --build
+```
+
+安装时选用自己的域名与端口，例如 `WEB_HOST=paper.home.arpa WEB_PORT=8543 API_PORT=9543 docker compose up -d --build`。将域名换成客户端可解析的名称。`API_HOST` 默认与 `WEB_HOST` 相同，两者都只填写主机名或 IP，IPv6 地址使用方括号。要把两个入口限制在本机，使用 `BIND_HOST=127.0.0.1 SERVER_HTTPS_ANY_HOST=false docker compose up -d --build`。后续重新创建时请继续使用同样的参数，也可以将它们保存到 Compose 的 `.env` 文件。
+
+也可以直接使用 Docker CLI，效果与默认 Compose 配置相同。
 
 ```sh
 docker build -f Dockerfile.server -t academatepaper/server:local . && \
 docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
-  -p 127.0.0.1:8443:8443 -p 127.0.0.1:9443:9443 \
+  -p 8443:8443 -p 9443:9443 \
   --mount type=volume,source=acade-paper-data,target=/data \
   academatepaper/server:local
 ```
@@ -61,7 +71,7 @@ docker exec -it acade-paper python -m app.container_entry setup prepare-containe
 
 ### 信任实例根证书
 
-新安装默认只在本机提供 HTTPS。不指定 `--cert` 和 `--key` 时，Server 首次启动会创建这个实例专用的自签根证书（CA），并自动为访问地址签发和续期服务证书。使用浏览器时，在当前设备的信任库中导入一次实例根证书。沿用原安装数据即可保留这份信任。
+首次启动时，Server 自动创建实例根证书（CA），为配置的 HTTPS 主地址和别名签发并续期服务证书。浏览器需要信任这个 CA，且证书应覆盖所访问的域名或 IP。给多台设备使用时，可在安装向导填写它们都能解析的服务器域名，或提供覆盖所用地址的证书。
 
 在新版 **AcadeMate Paper App** 中，可直接输入原生 API 地址（本机默认 `https://127.0.0.1:9443`）。首次遇到未受信的证书时，核对 App 显示的地址和 SHA-256 指纹后即可在 App 内信任，无需修改系统信任库。此选择只适用于当前服务器地址和端口。若证书与已记住的身份不再匹配，App 会要求重新确认。App 按输入的协议连接，显式使用 `http://` 时密码和会话会以明文传输。
 
@@ -94,20 +104,13 @@ curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
 
 ## HTTPS 与其他设备访问
 
-**监听所有地址。** 要让同一实例在局域网、Tailscale 等网络上都能访问，可以按端口区分 Web 和原生 API。下面的 Docker 配置把两个端口发布到宿主机的网络接口。设备只需使用能到达服务器的地址，例如浏览器访问 `https://服务器地址:8443`，App 填写 `https://服务器地址:9443`。新地址无需添加为别名。
+新安装默认按两个不同的 HTTPS 端口接受任意域名和 IP。DNS 或 Tailscale MagicDNS 需能在客户端解析该名称。使用 Tailscale 时，客户端应连接同一 tailnet，并有权访问对应端口。Docker 的 IPv4 和 IPv6 可达性取决于引擎和宿主机的网络配置。
 
-```sh
-docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
-  -p 8443:8443 -p 9443:9443 -e SERVER_HTTPS_ANY_HOST=true \
-  --mount type=volume,source=acade-paper-data,target=/data \
-  academatepaper/server:local
-```
+**已有实例启用全地址监听。** 直装从实例目录运行 `./bin/amp stop && ./bin/configure-https --any-host && ./bin/amp start`。Docker 使用原数据卷和其他设置重新创建容器，发布 `-p 8443:8443 -p 9443:9443` 并设置 `-e SERVER_HTTPS_ANY_HOST=true`。
 
-直装在安装向导选择允许所有网络接口，或给安装命令加 `--any-host`。已安装的 HTTPS 实例可执行 `./bin/amp stop && ./bin/configure-https --any-host && ./bin/amp start`；改回按主机名匹配时使用 `--no-any-host`。两组端口须分开。浏览器写请求仍须来自当前网页的 HTTPS 来源。
+**仅允许本机访问。** 新直装实例使用默认的两个回环主地址并加 `--no-any-host`。Docker 把发布参数改为 `-p 127.0.0.1:8443:8443 -p 127.0.0.1:9443:9443`。如还需限制可用主机名，在 Docker 中设置 `-e SERVER_HTTPS_ANY_HOST=false`。
 
-**证书和远程访问。** 服务会为未列出的地址提供现有证书。若要浏览器验证成功，证书必须受设备信任，且其 SAN 必须覆盖正在使用的域名或 IP。给多台设备使用时，可以统一使用证书已经覆盖、且能解析到服务器的名称。客户端通过 Tailscale 地址访问时，需已接入相应 tailnet 且有权访问这两个端口。
-
-**按指定地址访问。** Web 和原生 API 各有一个主地址，也可以各自接受多个地址。下面用 `paper.home.arpa` 的 `8543` 端口提供 Web、`9543` 端口提供 API，同时允许在服务器上使用 `127.0.0.1`。请把示例域名换成访问设备能解析的域名或服务器的局域网 IP，并选择空闲端口。手机或其他电脑应使用服务器的域名或局域网 IP。
+**设置证书名称和端口。** 下面用 `paper.home.arpa` 的 `8543` 端口提供 Web、`9543` 端口提供 API，同时将 `127.0.0.1` 纳入实例自动签发的证书。将示例域名换成客户端能解析的域名或服务器的局域网 IP。
 
 直装时可直接把以下地址参数传给安装向导。已有实例从安装目录运行以下命令。
 
@@ -120,11 +123,11 @@ cd "$HOME/AcadeMatePaper"
 ./bin/amp start
 ```
 
-Docker 用户使用同一镜像。下面的 `-p` 在宿主机的全部 IPv4 接口发布这两个端口。若只希望从某个接口接入，把 `0.0.0.0` 换成该接口的 IP。更改已有容器时，按下一节备份后重新创建容器并挂回原卷。
+Docker 用户使用同一镜像。更改已有容器时，按下一节备份后重新创建容器并挂回原卷。
 
 ```sh
 docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
-  -p 0.0.0.0:8543:8543 -p 0.0.0.0:9543:9543 \
+  -p 8543:8543 -p 9543:9543 \
   -e WEB_PUBLIC_ORIGIN=https://paper.home.arpa:8543 \
   -e SERVER_HTTPS_API_ORIGIN=https://paper.home.arpa:9543 \
   -e SERVER_HTTPS_WEB_ALIASES=https://127.0.0.1:8543 \
@@ -133,13 +136,13 @@ docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
   academatepaper/server:local
 ```
 
-别名参数接受以逗号分隔的完整 HTTPS 地址。每项填写 `https://主机名或IP:端口`，使用 443 时可以省略端口。实例按配置的地址匹配请求，Web 和 API 的地址不能完全相同。若别名使用额外端口，Docker 也要为每个新增端口添加 `-p`。例如增加 Web 别名 `https://reader.home.arpa:10443` 时，要同时增加 `-p 10443:10443`。
+别名参数接受以逗号分隔的完整 HTTPS 地址。每项填写 `https://主机名或IP:端口`，使用 443 时可以省略端口。默认模式下，Web 和 API 各自占用不同端口。若别名使用额外端口，Docker 也要为每个新增端口添加 `-p`。例如增加 Web 别名 `https://reader.home.arpa:10443` 时，要同时增加 `-p 10443:10443`。
 
 实例自动签发的证书支持多个域名和一个字面 IP 地址，该 IP 可以出现在多个端口。若需同时用两个不同的 IP 连接（例如 `127.0.0.1` 和 `192.168.1.10`），请按下段提供一张同时覆盖这两个 IP 及所用域名的证书。使用局域网域名搭配回环 IP 时可直接使用自动签发。
 
 **使用已有证书**时，在安装向导或 `configure-https` 命令后同时加上 `--cert /absolute/path/fullchain.pem --key /absolute/path/privkey.pem`。Docker 则在 `docker run` 增加 `--mount type=bind,source=/absolute/path/tls,target=/tls,readonly`、`-e SERVER_HTTPS_CERT_FILE=/tls/fullchain.pem` 和 `-e SERVER_HTTPS_KEY_FILE=/tls/privkey.pem`。证书的 SAN 应覆盖两个入口及全部别名使用的主机名和 IP，容器服务用户（UID 10001）需要读取私钥的权限。替换证书后请运行 `amp restart`。
 
-**使用公网 CA** 时，给 Web、API 设置不同的可解析公网域名，两者都用 HTTPS 默认端口。直装增加 `--acme`，Docker 增加 `-e SERVER_HTTPS_MODE=acme` 并发布 `-p 443:443`。此模式需要公网能访问 443，直装服务账号也需要监听该端口的权限。
+**使用公网 CA** 时，可给 Web、API 设置不同的可解析公网域名。若两者共用 HTTPS 端口 443，直装增加 `--acme --no-any-host`，Docker 增加 `-e SERVER_HTTPS_MODE=acme -e SERVER_HTTPS_ANY_HOST=false` 并发布 `-p 443:443`。此模式需要公网能访问 443，直装服务账号也需要监听该端口的权限。
 
 升级已有实例时，直装恢复原配置，Docker 使用原数据卷和原启动参数会保留其协议。仍需本机 HTTP 的新直装实例可显式选择 `--http-loopback`。Docker 可显式设置 `-e WEB_PUBLIC_ORIGIN=http://127.0.0.1:3000` 并只发布 `-p 127.0.0.1:3000:3000 -p 127.0.0.1:8000:8000`。
 

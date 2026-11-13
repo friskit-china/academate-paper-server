@@ -73,7 +73,7 @@ def add_transport_options(parser):
     parser.add_argument("--web-aliases", help="Additional browser HTTPS origins, comma-separated")
     parser.add_argument("--api-aliases", help="Additional native API HTTPS origins, comma-separated")
     parser.add_argument("--any-host", action=argparse.BooleanOptionalAction, default=None,
-                        help="Accept any HTTPS host on the separate Web and API ports")
+                        help="Accept any HTTPS host on separate Web and API ports (default for new installations)")
     parser.add_argument("--cert", type=Path, help="Full-chain PEM")
     parser.add_argument("--key", type=Path, help="Matching private key PEM")
     parser.add_argument("--acme", action="store_true", help="Use public ACME certificates")
@@ -124,16 +124,20 @@ def private_ports(reserved, preferred):
 
 def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None, any_host=None,
                   cert=None, key=None, acme=False):
-    from app.server_https import authority, validate_proxy_origins
+    from app.server_https import authority, supports_any_host, validate_proxy_origins
 
     origins = {**settings, "WEB_PUBLIC_ORIGIN": web, "SERVER_HTTPS_API_ORIGIN": api,
                "SERVER_HTTPS_CERT_FILE": str(cert) if cert else ""}
-    if any_host is not None:
-        origins["SERVER_HTTPS_ANY_HOST"] = str(any_host).lower()
     if web_aliases is not None:
         origins["SERVER_HTTPS_WEB_ALIASES"] = web_aliases
     if api_aliases is not None:
         origins["SERVER_HTTPS_API_ALIASES"] = api_aliases
+    if any_host is None:
+        # Older HTTPS settings without the flag used named virtual hosts.
+        use_all = (not settings.get("SERVER_HTTPS_API_ORIGIN")
+                   or settings.get("SERVER_HTTPS_ANY_HOST") == "true")
+        any_host = use_all and supports_any_host(origins)
+    origins["SERVER_HTTPS_ANY_HOST"] = str(any_host).lower()
     # Allocate the private upstream ports after reserving every public listener.
     web_origins, api_origins, ports, _ = validate_proxy_origins(origins, web_port=0, api_port=0)
     hosts = {authority(origin)[0] for origin in web_origins + api_origins}
@@ -150,7 +154,7 @@ def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None, any
             loopback.add(host)
     if acme and loopback:
         raise ValueError("Use the local CA for loopback addresses")
-    if hosts == loopback and origins.get("SERVER_HTTPS_ANY_HOST", "false") != "true":
+    if hosts == loopback and not any_host:
         if len(loopback) != 1:
             raise ValueError("Use one loopback address for a loopback-only installation")
         settings["SERVER_HTTPS_BIND_HOST"] = next(iter(loopback))
@@ -161,7 +165,7 @@ def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None, any
         settings["SERVER_HTTP_LOOPBACK_API_PORT"] = settings["SERVER_API_PORT"]
     web_port, api_port = private_ports(ports, (settings.get("SERVER_WEB_PORT"), settings.get("SERVER_API_PORT")))
     settings.update(
-        SERVER_HTTPS_ANY_HOST=origins.get("SERVER_HTTPS_ANY_HOST", "false"),
+        SERVER_HTTPS_ANY_HOST=origins["SERVER_HTTPS_ANY_HOST"],
         WEB_PUBLIC_ORIGIN=web_origins[0], SERVER_HTTPS_API_ORIGIN=api_origins[0],
         SERVER_HTTPS_WEB_ALIASES=",".join(web_origins[1:]),
         SERVER_HTTPS_API_ALIASES=",".join(api_origins[1:]),

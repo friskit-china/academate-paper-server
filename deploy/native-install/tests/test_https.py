@@ -20,11 +20,12 @@ class NativeHttpsTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
-    def test_new_install_uses_loopback_https_and_preserves_private_ports_on_retry(self):
+    def test_new_install_accepts_all_hosts_and_preserves_private_ports_on_retry(self):
         first = instance_settings(self.root, None, None)
         self.assertEqual(first["WEB_PUBLIC_ORIGIN"], "https://127.0.0.1:8443")
         self.assertEqual(first["SERVER_HTTPS_API_ORIGIN"], "https://127.0.0.1:9443")
-        self.assertEqual(first["SERVER_HTTPS_BIND_HOST"], "127.0.0.1")
+        self.assertEqual(first["SERVER_HTTPS_ANY_HOST"], "true")
+        self.assertNotIn("SERVER_HTTPS_BIND_HOST", first)
         self.assertEqual(first["SERVER_HTTPS_MODE"], "internal")
         self.assertEqual(first["WEB_SESSION_COOKIE_SECURE"], "true")
         private = {first["SERVER_WEB_PORT"], first["SERVER_API_PORT"]}
@@ -86,7 +87,7 @@ class NativeHttpsTests(unittest.TestCase):
         source = self.root / "source"
         source.mkdir()
         first = instance_settings(
-            source, None, None, web_aliases="https://Paper.home.arpa:8443",
+            source, None, None, any_host=False, web_aliases="https://Paper.home.arpa:8443",
             api_aliases="https://paper.home.arpa:9443, https://api.example.org:443",
         )
         self.assertNotIn("SERVER_HTTPS_BIND_HOST", first)
@@ -106,7 +107,9 @@ class NativeHttpsTests(unittest.TestCase):
     def test_any_host_uses_all_interfaces_and_can_be_disabled_after_restore(self):
         source = self.root / "source"
         source.mkdir()
-        first = instance_settings(source, None, None, any_host=True)
+        first = instance_settings(source, 45201, 45202)
+        self.assertEqual(first["WEB_PUBLIC_ORIGIN"], "https://127.0.0.1:45201")
+        self.assertEqual(first["SERVER_HTTPS_API_ORIGIN"], "https://127.0.0.1:45202")
         self.assertEqual(first["SERVER_HTTPS_ANY_HOST"], "true")
         self.assertNotIn("SERVER_HTTPS_BIND_HOST", first)
         self.assertEqual(first["SERVER_WEB_BIND_HOST"], "127.0.0.1")
@@ -125,8 +128,24 @@ class NativeHttpsTests(unittest.TestCase):
         configure_tls(original, "https://web.example", "https://api.example",
                       web_aliases="https://192.0.2.10:8333", api_aliases="https://192.0.2.10:9333")
         self.assertTrue({"8333", "9333"}.isdisjoint({original["SERVER_WEB_PORT"], original["SERVER_API_PORT"]}))
+        self.assertEqual(original["SERVER_HTTPS_ANY_HOST"], "false")
         with self.assertRaisesRegex(ValueError, "distinct"):
             update_tls_access(original, "https://API.example:443", None)
+
+    def test_legacy_hostname_mode_survives_restore_and_reconfiguration(self):
+        source = self.root / "old"
+        source.mkdir()
+        previous = instance_settings(source, 45201, 45202, any_host=False)
+        previous.pop("SERVER_HTTPS_ANY_HOST")
+        (source / "instance.json").write_text(json.dumps(previous))
+        (source / "data/database/workspace.sqlite3").touch()
+        restored_root = self.root / "restored"
+        restored_root.mkdir()
+        restored = instance_settings(restored_root, None, None, source)
+        self.assertEqual(restored["SERVER_HTTPS_BIND_HOST"], "127.0.0.1")
+        update_tls_access(restored, None, None)
+        self.assertEqual(restored["SERVER_HTTPS_ANY_HOST"], "false")
+        self.assertEqual(restored["SERVER_HTTPS_BIND_HOST"], "127.0.0.1")
 
     def test_invalid_install_combinations_fail_before_writing(self):
         for flags in (["--cert", "fullchain.pem"], ["--web-origin", "https://example.org"],

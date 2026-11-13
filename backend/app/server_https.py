@@ -87,6 +87,11 @@ def listener_ports(origins: list[str]) -> set[int]:
     return {authority(origin)[1] for origin in origins}
 
 
+def supports_any_host(environment: Mapping[str, str]) -> bool:
+    web, api = https_origins(environment)
+    return listener_ports(web).isdisjoint(listener_ports(api))
+
+
 def configure_proxy(environment: Mapping[str, str], *, web_port: int, api_port: int):
     web, api, ports, numeric_hosts = validate_proxy_origins(
         environment, web_port=web_port, api_port=api_port,

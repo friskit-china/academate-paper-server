@@ -6,7 +6,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 usage() {
     echo 'Usage: install.sh [--prefix DIRECTORY] [--bin-dir DIRECTORY] [--web-port N] [--api-port N] [--restore-from DIRECTORY] [--no-start]'
     echo '       HTTPS options: [--web-origin URL --api-origin URL] [--cert PEM --key PEM | --acme]'
-    echo '       All HTTPS hosts on separate Web and API ports: [--any-host | --no-any-host]'
+    echo '       Separate Web/API HTTPS ports accept all hosts on all interfaces by default. Use --no-any-host for named hosts only.'
     echo '       Additional HTTPS origins: [--web-aliases URL,...] [--api-aliases URL,...]'
     echo '       Local HTTP: --http-loopback (fresh installations use HTTPS by default)'
     echo '       install.sh --uninstall [--prefix DIRECTORY] [--bin-dir DIRECTORY]'
@@ -95,22 +95,13 @@ if [ "$uninstall" = yes ]; then
 fi
 if [ "$interactive" = yes ] && [ -z "$restore$web_origin$api_origin$web_port$api_port$web_aliases$api_aliases" ] &&
    [ "$http" = no ] && [ ! -f "$prefix/.academate-personal-server" ]; then
-    printf 'Web HTTPS 地址，含域名或 IP 和端口 [https://127.0.0.1:8443]: '
+    printf 'Web HTTPS 主地址 [https://127.0.0.1:8443]: '
     IFS= read -r web_origin || :
     web_origin=${web_origin:-https://127.0.0.1:8443}
     printf 'App API HTTPS 地址 [https://127.0.0.1:9443]: '
     IFS= read -r api_origin || :
     api_origin=${api_origin:-https://127.0.0.1:9443}
-    if [ -z "$any_host" ]; then
-        printf '允许通过所有网络接口的地址访问（Web 和 API 需使用不同端口）？[y/N]: '
-        IFS= read -r answer || answer=
-        case "$answer" in
-            y|Y|yes|YES) any_host=--any-host ;;
-            ''|n|N|no|NO) ;;
-            *) echo '请输入 y 或 n。' >&2; exit 2 ;;
-        esac
-    fi
-    if [ "$any_host" != --any-host ]; then
+    if [ "$any_host" = --no-any-host ]; then
         printf '其他 Web HTTPS 地址（可留空，多个用逗号分隔）: '
         IFS= read -r web_aliases || :
         printf '其他 API HTTPS 地址（可留空，多个用逗号分隔）: '

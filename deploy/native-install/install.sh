@@ -6,6 +6,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 usage() {
     echo 'Usage: install.sh [--prefix DIRECTORY] [--bin-dir DIRECTORY] [--web-port N] [--api-port N] [--restore-from DIRECTORY] [--no-start]'
     echo '       HTTPS options: [--web-origin URL --api-origin URL] [--cert PEM --key PEM | --acme]'
+    echo '       All HTTPS hosts on separate Web and API ports: [--any-host | --no-any-host]'
     echo '       Additional HTTPS origins: [--web-aliases URL,...] [--api-aliases URL,...]'
     echo '       Local HTTP: --http-loopback (fresh installations use HTTPS by default)'
     echo '       install.sh --uninstall [--prefix DIRECTORY] [--bin-dir DIRECTORY]'
@@ -18,6 +19,7 @@ web_origin=
 api_origin=
 web_aliases=
 api_aliases=
+any_host=
 cert=
 key=
 acme=no
@@ -31,6 +33,9 @@ while [ "$#" -gt 0 ]; do
         --help|-h) usage; exit 0 ;;
         --uninstall) uninstall=yes; shift; continue ;;
         --no-start) start=no; shift; continue ;;
+        --any-host|--no-any-host)
+            [ -z "$any_host" ] || { usage >&2; exit 2; }
+            any_host=$1; shift; continue ;;
         --acme) acme=yes; shift; continue ;;
         --http-loopback) http=yes; shift; continue ;;
         --prefix|--bin-dir|--web-port|--api-port|--restore-from|--web-origin|--api-origin|--web-aliases|--api-aliases|--cert|--key)
@@ -96,10 +101,21 @@ if [ "$interactive" = yes ] && [ -z "$restore$web_origin$api_origin$web_port$api
     printf 'App API HTTPS 地址 [https://127.0.0.1:9443]: '
     IFS= read -r api_origin || :
     api_origin=${api_origin:-https://127.0.0.1:9443}
-    printf '其他 Web HTTPS 地址（可留空，多个用逗号分隔）: '
-    IFS= read -r web_aliases || :
-    printf '其他 API HTTPS 地址（可留空，多个用逗号分隔）: '
-    IFS= read -r api_aliases || :
+    if [ -z "$any_host" ]; then
+        printf '允许通过所有网络接口的地址访问（Web 和 API 需使用不同端口）？[y/N]: '
+        IFS= read -r answer || answer=
+        case "$answer" in
+            y|Y|yes|YES) any_host=--any-host ;;
+            ''|n|N|no|NO) ;;
+            *) echo '请输入 y 或 n。' >&2; exit 2 ;;
+        esac
+    fi
+    if [ "$any_host" != --any-host ]; then
+        printf '其他 Web HTTPS 地址（可留空，多个用逗号分隔）: '
+        IFS= read -r web_aliases || :
+        printf '其他 API HTTPS 地址（可留空，多个用逗号分隔）: '
+        IFS= read -r api_aliases || :
+    fi
 fi
 if { [ -n "$cert" ] && [ -z "$key" ]; } || { [ -n "$key" ] && [ -z "$cert" ]; }; then
     echo '请同时指定 --cert 和 --key。' >&2; exit 2
@@ -110,7 +126,7 @@ fi
 if [ -n "$web_origin" ] && [ -n "$web_port$api_port" ]; then
     echo '请在 URL 中填写端口，或单独使用端口参数。' >&2; exit 2
 fi
-if { [ "$http" = yes ] && { [ -n "$web_origin$cert$web_aliases$api_aliases" ] || [ "$acme" = yes ]; }; } ||
+if { [ "$http" = yes ] && { [ -n "$web_origin$cert$web_aliases$api_aliases$any_host" ] || [ "$acme" = yes ]; }; } ||
    { [ -n "$cert" ] && [ "$acme" = yes ]; }; then
     echo 'HTTP、自有证书和公网 ACME 是不同的部署选项。' >&2; exit 2
 fi
@@ -205,6 +221,7 @@ set -- "$prefix" "$bin_dir" "$web_port" "$api_port" "$start" "$restore"
 if [ -n "$web_origin" ]; then set -- "$@" --web-origin "$web_origin" --api-origin "$api_origin"; fi
 if [ -n "$web_aliases" ]; then set -- "$@" --web-aliases "$web_aliases"; fi
 if [ -n "$api_aliases" ]; then set -- "$@" --api-aliases "$api_aliases"; fi
+if [ -n "$any_host" ]; then set -- "$@" "$any_host"; fi
 if [ -n "$cert" ]; then set -- "$@" --cert "$cert" --key "$key"; fi
 if [ "$acme" = yes ]; then set -- "$@" --acme; fi
 if [ "$http" = yes ]; then set -- "$@" --http-loopback; fi

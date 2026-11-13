@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 
 from app.server import SERVER_DEFAULTS, apply_server_defaults
-from app.server_https import authority, https_origins
+from app.server_https import any_host_enabled, authority, https_origins
 
 KEYS = ("INTERNAL_SERVICE_TOKEN", "CREDENTIAL_INSTALLATION_ID", "CREDENTIAL_MASTER_KEY_B64")
 MODULES = {
@@ -63,7 +63,7 @@ def apply_container_network(environment: MutableMapping[str, str], *, initialize
     )
     aliases = any(environment.get(key) for key in ("SERVER_HTTPS_WEB_ALIASES",
                                                     "SERVER_HTTPS_API_ALIASES"))
-    if use_default_tls or tls_inputs or api or aliases:
+    if use_default_tls or tls_inputs or api or aliases or any_host_enabled(environment):
         web = web or "https://127.0.0.1:8443"
         api = api or "https://127.0.0.1:9443"
     else:

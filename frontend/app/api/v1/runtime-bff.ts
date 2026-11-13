@@ -34,6 +34,7 @@ const UNTRUSTED_BROWSER_IDENTITY_HEADERS = new Set([
   "x-forwarded-host",
   "x-forwarded-port",
   "x-forwarded-proto",
+  "forwarded",
   "x-real-ip",
 ]);
 
@@ -49,6 +50,7 @@ type RuntimeBffConfiguration = {
   apiInternalUrl: URL;
   browserOrigin: string;
   browserOrigins: readonly string[];
+  anyHostHttpsPorts: readonly number[];
   internalServiceToken: string;
 };
 
@@ -113,11 +115,35 @@ function matchesBrowserAuthority(authority: string, origin: string): boolean {
   }
 }
 
-export function browserOriginForRequest(request: Request, origins: readonly string[]): string | null {
+function httpsOriginForHost(host: string, ports: readonly number[]): string | null {
+  try {
+    // Next receives private HTTP from the TLS proxy. Only the preserved Host selects the
+    // browser origin. Reject implicit URL rewrites such as percent escapes and short IPv4.
+    const url = new URL(`https://${host}`);
+    if (!matchesBrowserAuthority(host, url.origin) || !ports.includes(Number(url.port || "443"))) {
+      return null;
+    }
+    if (!url.hostname.startsWith("[")) {
+      const dnsLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+      if (url.hostname.length > 253 || !url.hostname.split(".").every((label) => dnsLabel.test(label))) return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function browserOriginForRequest(
+  request: Request, origins: readonly string[], anyHostHttpsPorts: readonly number[] = [],
+): string | null {
   const host = request.headers.get("host");
   if (host === null) return null;
-  const matches = origins.filter((origin) => matchesBrowserAuthority(host, origin));
   const supplied = request.headers.get("origin");
+  if (anyHostHttpsPorts.length > 0) {
+    const selected = httpsOriginForHost(host, anyHostHttpsPorts);
+    return supplied === null || supplied === selected ? selected : null;
+  }
+  const matches = origins.filter((origin) => matchesBrowserAuthority(host, origin));
   if (supplied !== null) return matches.includes(supplied) ? supplied : null;
   // Do not guess the scheme if an operator configured both HTTP and HTTPS on one authority.
   return matches.length === 1 ? matches[0] : null;
@@ -201,6 +227,15 @@ export function runtimeConfiguration(environment: RuntimeEnvironment): RuntimeBf
   ) {
     return null;
   }
+  const anyHostHttpsPorts: number[] = [];
+  if (environment.SERVER_HTTPS_ANY_HOST === "true") {
+    const ports = environment.SERVER_HTTPS_WEB_PORTS?.split(",") ?? [];
+    if (!browserOrigins!.every((origin) => origin.startsWith("https://"))
+        || !ports.length || !ports.every((port) => /^[1-9][0-9]{0,4}$/.test(port) && Number(port) <= 65535)) {
+      return null;
+    }
+    anyHostHttpsPorts.push(...ports.map(Number));
+  }
   try {
     const apiInternalUrl = new URL(rawApiUrl);
     if (
@@ -216,6 +251,7 @@ export function runtimeConfiguration(environment: RuntimeEnvironment): RuntimeBf
       apiInternalUrl,
       browserOrigin,
       browserOrigins: browserOrigins!,
+      anyHostHttpsPorts,
       internalServiceToken,
     };
   } catch {
@@ -465,11 +501,11 @@ export async function proxyApiRequest(
     );
   }
 
-  const selectedOrigin = browserOriginForRequest(request, configuration.browserOrigins);
+  const selectedOrigin = browserOriginForRequest(request, configuration.browserOrigins, configuration.anyHostHttpsPorts);
   // Legacy server-side status adapters historically omit Host/Origin. Keep that narrow read
   // compatibility; real browser authorities and all writes must match the explicit allowlist.
   const browserOrigin = selectedOrigin ?? (
-    !request.headers.has("host") && !request.headers.has("origin")
+    !configuration.anyHostHttpsPorts.length && !request.headers.has("host") && !request.headers.has("origin")
       ? configuration.browserOrigin : null
   );
   if (browserOrigin === null) {
@@ -588,7 +624,7 @@ export async function proxyAutomaticOwnerSessionRequest(
   // are deliberately narrower: re-check the frontend's own runtime configuration here so a
   // split-deployment or environment drift cannot publish this privileged bridge on a public host,
   // even when the private API was started with otherwise-valid loopback settings.
-  if (!isLoopbackBrowserOrigin(configuration.browserOrigin)) {
+  if (configuration.anyHostHttpsPorts.length > 0 || !isLoopbackBrowserOrigin(configuration.browserOrigin)) {
     return Response.json(
       { detail: "Automatic owner sessions require a loopback browser origin." },
       { status: 403, headers: { "Cache-Control": "no-store" } },

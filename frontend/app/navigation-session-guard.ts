@@ -3,7 +3,7 @@ import {
   proxyApiRequest,
   type RuntimeBffOptions,
   WEB_SESSION_COOKIE_NAME,
-  configuredBrowserOrigins,
+  runtimeConfiguration,
   browserOriginForRequest,
 } from "./api/v1/runtime-bff.ts";
 import { proxyV2ApiRequest, V2_ACCESS_COOKIE } from "./api/v2/runtime-bff.ts";
@@ -85,14 +85,16 @@ export async function guardAuthenticatedNavigation(
   request: Request,
   options: RuntimeBffOptions = {},
 ): Promise<Response | null> {
+  const config = runtimeConfiguration(options.environment ?? process.env);
+  if (config === null) return authenticationUnavailable();
   const headers = new Headers();
   // Next may build Request.url from the container listener. Preserve the browser Host.
-  headers.set("host", request.headers.get("host") ?? new URL(request.url).host);
+  const host = request.headers.get("host");
+  if (host !== null) headers.set("host", host);
+  else if (!config.anyHostHttpsPorts.length) headers.set("host", new URL(request.url).host);
   const origin = request.headers.get("origin");
   if (origin !== null) headers.set("origin", origin);
-  const origins = configuredBrowserOrigins(options.environment ?? process.env);
-  if (origins === null) return authenticationUnavailable();
-  const browserOrigin = browserOriginForRequest(new Request(request.url, { headers }), origins);
+  const browserOrigin = browserOriginForRequest(new Request(request.url, { headers }), config.browserOrigins, config.anyHostHttpsPorts);
   if (browserOrigin === null) {
     return new Response("不支持此访问地址。", { status: 403, headers: { "Cache-Control": "no-store" } });
   }

@@ -21,6 +21,7 @@ class VersionedTransportMiddleware:
         session_factory,
         web_public_origin,
         allowed_web_origins=None,
+        any_host_web_ports=(),
         cookie_secure=False,
         allow_insecure_http=False,
         **v1_options,
@@ -33,6 +34,7 @@ class VersionedTransportMiddleware:
             internal_service_token=v1_options["expected_token"],
             web_public_origin=web_public_origin,
             allowed_web_origins=allowed_web_origins,
+            any_host_web_ports=any_host_web_ports,
             cookie_secure=cookie_secure,
             allow_insecure_http=allow_insecure_http,
         )

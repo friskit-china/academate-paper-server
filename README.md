@@ -94,7 +94,20 @@ curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
 
 ## HTTPS 与其他设备访问
 
-Web 和原生 API 各有一个主地址，也可以各自接受多个地址。下面用 `paper.home.arpa` 的 `8543` 端口提供 Web、`9543` 端口提供 API，同时允许在服务器上使用 `127.0.0.1`。请把示例域名换成访问设备能解析的域名或服务器的局域网 IP，并选择空闲端口。手机或其他电脑应使用服务器的域名或局域网 IP。
+**监听所有地址。** 要让同一实例在局域网、Tailscale 等网络上都能访问，可以按端口区分 Web 和原生 API。下面的 Docker 配置把两个端口发布到宿主机的网络接口。设备只需使用能到达服务器的地址，例如浏览器访问 `https://服务器地址:8443`，App 填写 `https://服务器地址:9443`。新地址无需添加为别名。
+
+```sh
+docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
+  -p 8443:8443 -p 9443:9443 -e SERVER_HTTPS_ANY_HOST=true \
+  --mount type=volume,source=acade-paper-data,target=/data \
+  academatepaper/server:local
+```
+
+直装在安装向导选择允许所有网络接口，或给安装命令加 `--any-host`。已安装的 HTTPS 实例可执行 `./bin/amp stop && ./bin/configure-https --any-host && ./bin/amp start`；改回按主机名匹配时使用 `--no-any-host`。两组端口须分开。浏览器写请求仍须来自当前网页的 HTTPS 来源。
+
+**证书和远程访问。** 服务会为未列出的地址提供现有证书。若要浏览器验证成功，证书必须受设备信任，且其 SAN 必须覆盖正在使用的域名或 IP。给多台设备使用时，可以统一使用证书已经覆盖、且能解析到服务器的名称。客户端通过 Tailscale 地址访问时，需已接入相应 tailnet 且有权访问这两个端口。
+
+**按指定地址访问。** Web 和原生 API 各有一个主地址，也可以各自接受多个地址。下面用 `paper.home.arpa` 的 `8543` 端口提供 Web、`9543` 端口提供 API，同时允许在服务器上使用 `127.0.0.1`。请把示例域名换成访问设备能解析的域名或服务器的局域网 IP，并选择空闲端口。手机或其他电脑应使用服务器的域名或局域网 IP。
 
 直装时可直接把以下地址参数传给安装向导。已有实例从安装目录运行以下命令。
 

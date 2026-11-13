@@ -57,6 +57,8 @@ def https_origins(environment: Mapping[str, str]) -> tuple[list[str], list[str]]
 
 def validate_proxy_origins(environment: Mapping[str, str], *, web_port: int, api_port: int):
     web, api = https_origins(environment)
+    if any_host_enabled(environment) and listener_ports(web) & listener_ports(api):
+        raise ValueError("All-host HTTPS requires separate Web and API listener ports")
     authorities = [authority(origin) for origin in web + api]
     ports = {port for _, port in authorities}
     if ports.intersection((web_port, api_port)):
@@ -72,6 +74,17 @@ def validate_proxy_origins(environment: Mapping[str, str], *, web_port: int, api
     if len(numeric_hosts) > 1 and not environment.get("SERVER_HTTPS_CERT_FILE"):
         raise ValueError("Multiple IP addresses require a certificate and key covering all IPs")
     return web, api, ports, numeric_hosts
+
+
+def any_host_enabled(environment: Mapping[str, str]) -> bool:
+    value = environment.get("SERVER_HTTPS_ANY_HOST", "false").lower()
+    if value not in {"true", "false", ""}:
+        raise ValueError("SERVER_HTTPS_ANY_HOST must be true or false")
+    return value == "true"
+
+
+def listener_ports(origins: list[str]) -> set[int]:
+    return {authority(origin)[1] for origin in origins}
 
 
 def configure_proxy(environment: Mapping[str, str], *, web_port: int, api_port: int):
@@ -111,9 +124,18 @@ def configure_proxy(environment: Mapping[str, str], *, web_port: int, api_port: 
         config += f"    http_port {other}\n"
     # Clients connecting by IP omit SNI; with container NAT their destination IP
     # is also unavailable to Caddy. DNS clients send SNI and select their own leaf.
-    if numeric_hosts or certificate:
+    all_hosts = any_host_enabled(environment)
+    if numeric_hosts or certificate or all_hosts:
         default_sni = numeric_hosts[0] if numeric_hosts else authority(web[0])[0]
         config += f"    default_sni {default_sni}\n"
+        if all_hosts:
+            # New SNI names receive an existing certificate; never issue one on demand.
+            config += f"    fallback_sni {default_sni}\n"
+    if all_hosts:
+        # Keep named sites so Caddy manages their certificates, then accept any Host
+        # header on the same listeners. Their disjoint ports determine the upstream.
+        for sites in (web, api):
+            sites.extend(f"https://:{port}" for port in sorted(listener_ports(sites)))
     config += "}\n"
     bind = environment.get("SERVER_HTTPS_BIND_HOST")
     if bind and "%" in bind:

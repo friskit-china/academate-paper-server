@@ -48,10 +48,13 @@ def apply_server_defaults(environment: dict[str, str]) -> None:
     for key, value in SERVER_DEFAULTS.items():
         environment.setdefault(key, value)
     if environment.get("SERVER_HTTPS_API_ORIGIN"):
+        from app.server_https import any_host_enabled, https_origins, listener_ports
+
+        if any_host_enabled(environment):
+            web, _ = https_origins(environment)
+            environment["SERVER_HTTPS_WEB_PORTS"] = ",".join(map(str, sorted(listener_ports(web))))
         if any(environment.get(key) for key in ("SERVER_HTTPS_WEB_ALIASES",
                                                 "SERVER_HTTPS_API_ALIASES")):
-            from app.server_https import https_origins
-
             web, _ = https_origins(environment)
             for setting, required in (("WEB_CLIENT_ORIGINS", web[1:]), ("CORS_ORIGINS", web)):
                 existing = [v.strip() for v in environment.get(setting, "").split(",") if v.strip()]
@@ -297,6 +300,10 @@ def web_environment(
         "WEB_CLIENT_ORIGINS", "WEB_ALLOW_INSECURE_HTTP",
     )
     result = {key: environment[key] for key in allowed if key in environment}
+    if (environment.get("SERVER_HTTPS_API_ORIGIN")
+            and environment.get("SERVER_HTTPS_ANY_HOST", "").lower() == "true"):
+        result["SERVER_HTTPS_ANY_HOST"] = "true"
+        result["SERVER_HTTPS_WEB_PORTS"] = environment["SERVER_HTTPS_WEB_PORTS"]
     result.update({
         "NODE_ENV": "production",
         "NEXT_TELEMETRY_DISABLED": "1",

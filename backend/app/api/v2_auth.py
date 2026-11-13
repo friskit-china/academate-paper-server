@@ -32,6 +32,7 @@ from app.infrastructure.client_sessions import (
 )
 from app.infrastructure.db.client_models import ClientAccessCredentialModel
 from app.infrastructure.db.models import UserModel, WorkspaceModel
+from app.server_https import authority as https_authority
 
 router = APIRouter(tags=["client-authentication"])
 _TRANSPORT_HEADER = b"x-academate-client-transport"
@@ -230,6 +231,7 @@ class ClientApiMiddleware:
         internal_service_token=None,
         web_public_origin: str | None = None,
         allowed_web_origins: list[str] | tuple[str, ...] | None = None,
+        any_host_web_ports: list[int] | tuple[int, ...] = (),
         cookie_secure: bool = False,
         allow_insecure_http: bool = False,
     ) -> None:
@@ -251,7 +253,26 @@ class ClientApiMiddleware:
             for origin in configured
         )
         self.web_authorities = frozenset(self.web_origins.values())
+        self.any_host_web_ports = frozenset(any_host_web_ports) if cookie_secure else frozenset()
         self.cookie_secure = cookie_secure
+
+    def _valid_web_origin(self, host: str, origin: str | None, method: str) -> bool:
+        if origin is None and method not in {"GET", "HEAD", "OPTIONS"}:
+            return False
+        explicit = (host in self.web_authorities if origin is None
+                    else self.web_origins.get(origin) == host)
+        if explicit:
+            return True
+        if self.any_host_web_ports:
+            try:
+                name, port = https_authority(f"https://{host}")
+            except (ValueError, UnicodeError):
+                return False
+            name = f"[{name}]" if ":" in name else name
+            canonical = name if port == 443 else f"{name}:{port}"
+            return (port in self.any_host_web_ports and host == canonical
+                    and (origin is None or origin == f"https://{canonical}"))
+        return False
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not scope.get("path", "").startswith("/api/v2"):
@@ -301,17 +322,11 @@ class ClientApiMiddleware:
                 supplied = values.get(_SERVICE_HEADER, [""])[0]
                 origin = values.get(b"origin", [None])[0]
                 authority = values.get(b"host", [""])[0]
-                origin_matches = (
-                    self.web_origins.get(origin) == authority
-                    if origin is not None
-                    else scope["method"] in {"GET", "HEAD", "OPTIONS"}
-                    and authority in self.web_authorities
-                )
                 if (
                     authorization is not None
                     or not self.internal_token
                     or not secrets.compare_digest(supplied, self.internal_token)
-                    or not origin_matches
+                    or not self._valid_web_origin(authority, origin, scope["method"])
                 ):
                     raise ClientAuthenticationError("INVALID_WEB_TRANSPORT")
             elif cookies and (scope["method"], scope["path"]) != (

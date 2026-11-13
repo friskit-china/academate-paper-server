@@ -28,7 +28,7 @@ export async function proxyV2ApiRequest(
     return denied(400, "INVALID_API_PATH");
   }
   if (request.headers.has("authorization")) return denied(400, "AMBIGUOUS_CREDENTIALS");
-  const browserOrigin = browserOriginForRequest(request, config.browserOrigins);
+  const browserOrigin = browserOriginForRequest(request, config.browserOrigins, config.anyHostHttpsPorts);
   if (browserOrigin === null || !isCanonicalSameOriginWrite(request, method, browserOrigin)) {
     return denied(403, "SAME_ORIGIN_REQUIRED");
   }

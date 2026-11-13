@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     external_toolchain_component_ghostscript: ExternalToolchainComponentState | None = None
     external_toolchain_component_ghostscript_extras: ExternalToolchainComponentState | None = None
     web_client_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    server_https_any_host: bool = False
+    server_https_web_ports: Annotated[list[int], NoDecode] = Field(default_factory=list)
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
@@ -125,7 +127,7 @@ class Settings(BaseSettings):
     # Keep the default bounded drain inside Compose's default ten-second stop grace period.
     worker_drain_timeout_seconds: float = Field(default=8.0, ge=0, le=300)
 
-    @field_validator("cors_origins", "web_client_origins", mode="before")
+    @field_validator("cors_origins", "web_client_origins", "server_https_web_ports", mode="before")
     @classmethod
     def parse_cors_origins(cls, value: object) -> object:
         if isinstance(value, str):

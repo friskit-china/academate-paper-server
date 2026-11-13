@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "academatepaper-backend"
-version = "0.1.4"
+version = "0.1.5"
 description = "AcadeMate Paper FastAPI application and worker"
 requires-python = ">=3.12"
 dependencies = [

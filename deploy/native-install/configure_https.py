@@ -26,7 +26,7 @@ PLATFORMS = {
 ROOT_CERT = Path("https/caddy/pki/authorities/local/root.crt")
 TRANSPORT_KEYS = (
     "WEB_PUBLIC_ORIGIN", "SERVER_HTTPS_API_ORIGIN", "SERVER_HTTPS_CERT_FILE",
-    "SERVER_HTTPS_WEB_ALIASES", "SERVER_HTTPS_API_ALIASES",
+    "SERVER_HTTPS_WEB_ALIASES", "SERVER_HTTPS_API_ALIASES", "SERVER_HTTPS_ANY_HOST",
     "SERVER_HTTPS_KEY_FILE", "SERVER_HTTPS_MODE", "SERVER_HTTPS_BIND_HOST",
     "SERVER_WEB_PORT", "SERVER_API_PORT", "APP_PORT", "WEB_SESSION_COOKIE_SECURE",
     "WEB_ALLOW_INSECURE_HTTP", "WEB_CLIENT_ORIGINS", "RUNTIME_NETWORK_SCOPE",
@@ -72,6 +72,8 @@ def add_transport_options(parser):
     parser.add_argument("--api-origin", help="HTTPS address used by native apps")
     parser.add_argument("--web-aliases", help="Additional browser HTTPS origins, comma-separated")
     parser.add_argument("--api-aliases", help="Additional native API HTTPS origins, comma-separated")
+    parser.add_argument("--any-host", action=argparse.BooleanOptionalAction, default=None,
+                        help="Accept any HTTPS host on the separate Web and API ports")
     parser.add_argument("--cert", type=Path, help="Full-chain PEM")
     parser.add_argument("--key", type=Path, help="Matching private key PEM")
     parser.add_argument("--acme", action="store_true", help="Use public ACME certificates")
@@ -87,7 +89,8 @@ def check_options(parser, args):
     if args.acme and args.cert:
         parser.error("--acme cannot be combined with --cert and --key")
     if args.http_loopback and (args.api_origin or args.cert or args.acme
-                               or args.web_aliases is not None or args.api_aliases is not None):
+                               or args.web_aliases is not None or args.api_aliases is not None
+                               or args.any_host is not None):
         parser.error("--http-loopback takes no TLS settings")
 
 
@@ -119,12 +122,14 @@ def private_ports(reserved, preferred):
     return ports
 
 
-def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None,
+def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None, any_host=None,
                   cert=None, key=None, acme=False):
     from app.server_https import authority, validate_proxy_origins
 
     origins = {**settings, "WEB_PUBLIC_ORIGIN": web, "SERVER_HTTPS_API_ORIGIN": api,
                "SERVER_HTTPS_CERT_FILE": str(cert) if cert else ""}
+    if any_host is not None:
+        origins["SERVER_HTTPS_ANY_HOST"] = str(any_host).lower()
     if web_aliases is not None:
         origins["SERVER_HTTPS_WEB_ALIASES"] = web_aliases
     if api_aliases is not None:
@@ -145,7 +150,7 @@ def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None,
             loopback.add(host)
     if acme and loopback:
         raise ValueError("Use the local CA for loopback addresses")
-    if hosts == loopback:
+    if hosts == loopback and origins.get("SERVER_HTTPS_ANY_HOST", "false") != "true":
         if len(loopback) != 1:
             raise ValueError("Use one loopback address for a loopback-only installation")
         settings["SERVER_HTTPS_BIND_HOST"] = next(iter(loopback))
@@ -156,6 +161,7 @@ def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None,
         settings["SERVER_HTTP_LOOPBACK_API_PORT"] = settings["SERVER_API_PORT"]
     web_port, api_port = private_ports(ports, (settings.get("SERVER_WEB_PORT"), settings.get("SERVER_API_PORT")))
     settings.update(
+        SERVER_HTTPS_ANY_HOST=origins.get("SERVER_HTTPS_ANY_HOST", "false"),
         WEB_PUBLIC_ORIGIN=web_origins[0], SERVER_HTTPS_API_ORIGIN=api_origins[0],
         SERVER_HTTPS_WEB_ALIASES=",".join(web_origins[1:]),
         SERVER_HTTPS_API_ALIASES=",".join(api_origins[1:]),
@@ -182,13 +188,13 @@ def install_tls_proxy(root, settings):
         subprocess.run((command[0], "validate", *command[2:]), env=env, check=True)
 
 
-def update_tls_aliases(settings, web_aliases, api_aliases):
+def update_tls_access(settings, web_aliases, api_aliases, any_host=None):
     api = settings.get("SERVER_HTTPS_API_ORIGIN")
     if not api:
-        raise ValueError("Choose HTTPS origins before adding aliases to an HTTP installation")
+        raise ValueError("Choose HTTPS origins before changing HTTPS access on an HTTP installation")
     cert, key = settings.get("SERVER_HTTPS_CERT_FILE"), settings.get("SERVER_HTTPS_KEY_FILE")
     configure_tls(settings, settings["WEB_PUBLIC_ORIGIN"], api,
-                  web_aliases=web_aliases, api_aliases=api_aliases,
+                  web_aliases=web_aliases, api_aliases=api_aliases, any_host=any_host,
                   cert=Path(cert) if cert else None, key=Path(key) if key else None,
                   acme=settings.get("SERVER_HTTPS_MODE") == "acme")
 
@@ -197,6 +203,8 @@ def show_access(settings):
     web = settings["WEB_PUBLIC_ORIGIN"]
     api = settings.get("SERVER_HTTPS_API_ORIGIN") or f"http://127.0.0.1:{settings['SERVER_API_PORT']}"
     print(f"Web: {web}   API: {api}", flush=True)
+    if settings.get("SERVER_HTTPS_ANY_HOST") == "true":
+        print("已在所有网络接口启用 HTTPS。使用 Web 或 API 端口可通过服务器的其他地址访问。", flush=True)
     for label, name in (("Web", "SERVER_HTTPS_WEB_ALIASES"), ("API", "SERVER_HTTPS_API_ALIASES")):
         if settings.get(name):
             print(f"{label} 别名: {settings[name]}", flush=True)
@@ -229,11 +237,11 @@ def main():
         web = args.web_origin or (settings["WEB_PUBLIC_ORIGIN"] if existing else "https://127.0.0.1:8443")
         api = args.api_origin or existing or "https://127.0.0.1:9443"
         if existing and not (args.web_origin or args.cert or args.acme) and (
-                args.web_aliases is not None or args.api_aliases is not None):
-            update_tls_aliases(settings, args.web_aliases, args.api_aliases)
+                args.web_aliases is not None or args.api_aliases is not None or args.any_host is not None):
+            update_tls_access(settings, args.web_aliases, args.api_aliases, args.any_host)
         else:
             configure_tls(settings, web, api, web_aliases=args.web_aliases, api_aliases=args.api_aliases,
-                          cert=args.cert, key=args.key, acme=args.acme)
+                          any_host=args.any_host, cert=args.cert, key=args.key, acme=args.acme)
         install_tls_proxy(root, settings)
     with tempfile.NamedTemporaryFile(mode="w", dir=root, delete=False, encoding="utf-8") as temp:
         json.dump(settings, temp, indent=2)

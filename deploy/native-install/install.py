@@ -21,7 +21,7 @@ from urllib.request import urlopen
 
 from configure_https import (
     TRANSPORT_KEYS, add_transport_options, check_options, configure_http, configure_tls,
-    install_tls_proxy, show_access, update_tls_aliases,
+    install_tls_proxy, show_access, update_tls_access,
 )
 from install_tex import install as install_tex
 
@@ -220,7 +220,7 @@ def restore_data(root, source, settings):
 
 
 def set_install_transport(settings, source, web_port, api_port, web_origin, api_origin, cert, key,
-                          acme, http_loopback, web_aliases, api_aliases):
+                          acme, http_loopback, web_aliases, api_aliases, any_host):
     if source and not any((web_port, api_port, web_origin, cert, acme, http_loopback)):
         previous = json.loads((source / "instance.json").read_text())
         settings.update({k: previous[k] for k in TRANSPORT_KEYS if k in previous})
@@ -241,8 +241,8 @@ def set_install_transport(settings, source, web_port, api_port, web_origin, api_
                 settings["SERVER_HTTPS_MODE"] = "provided"
             else:
                 settings["SERVER_HTTPS_MODE"] = "acme"
-        if web_aliases is not None or api_aliases is not None:
-            update_tls_aliases(settings, web_aliases, api_aliases)
+        if web_aliases is not None or api_aliases is not None or any_host is not None:
+            update_tls_access(settings, web_aliases, api_aliases, any_host)
         return
     if http_loopback:
         configure_http(settings, web_port or 3000, api_port or 8000)
@@ -250,14 +250,14 @@ def set_install_transport(settings, source, web_port, api_port, web_origin, api_
         web = web_origin or f"https://127.0.0.1:{web_port or 8443}"
         api = api_origin or f"https://127.0.0.1:{api_port or 9443}"
         configure_tls(settings, web, api, web_aliases=web_aliases, api_aliases=api_aliases,
-                      cert=cert, key=key, acme=acme)
+                      any_host=any_host, cert=cert, key=key, acme=acme)
 
 
 def instance_settings(root, web_port, api_port, source=None, *, web_origin=None, api_origin=None,
                       cert=None, key=None, acme=False, http_loopback=False,
-                      web_aliases=None, api_aliases=None):
+                      web_aliases=None, api_aliases=None, any_host=None):
     transport = (source, web_port, api_port, web_origin, api_origin, cert, key, acme, http_loopback,
-                 web_aliases, api_aliases)
+                 web_aliases, api_aliases, any_host)
     path = root / "instance.json"
     data = root / "data"
     directories = ("database", "papers", "exports", "tmp", "run")
@@ -277,8 +277,8 @@ def instance_settings(root, web_port, api_port, source=None, *, web_origin=None,
         # A failed certificate check or download can be retried with corrected arguments.
         if any((web_port, api_port, web_origin, cert, acme, http_loopback)):
             set_install_transport(settings, *transport)
-        elif web_aliases is not None or api_aliases is not None:
-            update_tls_aliases(settings, web_aliases, api_aliases)
+        elif web_aliases is not None or api_aliases is not None or any_host is not None:
+            update_tls_access(settings, web_aliases, api_aliases, any_host)
         return settings
     if data.exists():
         raise FileExistsError("实例目录已有 data 而缺少 instance.json，不能覆盖。")
@@ -450,6 +450,6 @@ if __name__ == "__main__":
         int(args.api_port) if args.api_port else None,
         args.start == "yes",
         source, web_origin=args.web_origin, api_origin=args.api_origin,
-        web_aliases=args.web_aliases, api_aliases=args.api_aliases,
+        web_aliases=args.web_aliases, api_aliases=args.api_aliases, any_host=args.any_host,
         cert=args.cert, key=args.key, acme=args.acme, http_loopback=args.http_loopback,
     )

@@ -259,6 +259,8 @@ def create_app(
             "session_factory": session_factory,
             "web_public_origin": application_settings.web_public_origin,
             "allowed_web_origins": application_settings.web_client_origins,
+            "any_host_web_ports": (application_settings.server_https_web_ports
+                                   if application_settings.server_https_any_host else []),
             "cookie_secure": application_settings.web_session_cookie_secure,
             "allow_insecure_http": application_settings.web_allow_insecure_http,
         }

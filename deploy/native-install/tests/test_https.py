@@ -10,7 +10,7 @@ from pathlib import Path
 INSTALLER = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(INSTALLER), str(INSTALLER.parents[1] / "backend")]
 
-from configure_https import configure_tls, update_tls_aliases
+from configure_https import configure_tls, update_tls_access
 from install import instance_settings
 
 
@@ -100,7 +100,24 @@ class NativeHttpsTests(unittest.TestCase):
         restored = instance_settings(target, None, None, source)
         self.assertEqual(restored["SERVER_HTTPS_API_ALIASES"], first["SERVER_HTTPS_API_ALIASES"])
         self.assertEqual(restored["SERVER_HTTPS_WEB_ALIASES"], first["SERVER_HTTPS_WEB_ALIASES"])
-        update_tls_aliases(restored, "", "")
+        update_tls_access(restored, "", "")
+        self.assertEqual(restored["SERVER_HTTPS_BIND_HOST"], "127.0.0.1")
+
+    def test_any_host_uses_all_interfaces_and_can_be_disabled_after_restore(self):
+        source = self.root / "source"
+        source.mkdir()
+        first = instance_settings(source, None, None, any_host=True)
+        self.assertEqual(first["SERVER_HTTPS_ANY_HOST"], "true")
+        self.assertNotIn("SERVER_HTTPS_BIND_HOST", first)
+        self.assertEqual(first["SERVER_WEB_BIND_HOST"], "127.0.0.1")
+        (source / "data/database/workspace.sqlite3").touch()
+        target = self.root / "copy"
+        target.mkdir()
+        restored = instance_settings(target, None, None, source)
+        self.assertEqual(restored["SERVER_HTTPS_ANY_HOST"], "true")
+        self.assertNotIn("SERVER_HTTPS_BIND_HOST", restored)
+        update_tls_access(restored, None, None, any_host=False)
+        self.assertEqual(restored["SERVER_HTTPS_ANY_HOST"], "false")
         self.assertEqual(restored["SERVER_HTTPS_BIND_HOST"], "127.0.0.1")
 
     def test_alias_ports_are_reserved_and_conflicts_are_rejected(self):
@@ -109,11 +126,11 @@ class NativeHttpsTests(unittest.TestCase):
                       web_aliases="https://192.0.2.10:8333", api_aliases="https://192.0.2.10:9333")
         self.assertTrue({"8333", "9333"}.isdisjoint({original["SERVER_WEB_PORT"], original["SERVER_API_PORT"]}))
         with self.assertRaisesRegex(ValueError, "distinct"):
-            update_tls_aliases(original, "https://API.example:443", None)
+            update_tls_access(original, "https://API.example:443", None)
 
     def test_invalid_install_combinations_fail_before_writing(self):
         for flags in (["--cert", "fullchain.pem"], ["--web-origin", "https://example.org"],
-                      ["--http-loopback", "--acme"], ["--acme", "--cert", "c", "--key", "k"],
+                      ["--http-loopback", "--any-host"], ["--http-loopback", "--acme"], ["--acme", "--cert", "c", "--key", "k"],
                       ["--http-loopback", "--api-aliases", "https://app.example:9443"]):
             with self.subTest(flags=flags):
                 target = self.root / "unused"

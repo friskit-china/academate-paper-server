@@ -178,3 +178,56 @@ test("v1 compatibility writes also select the matching explicit browser origin",
   } });
   assert.equal(response.status, 200);
 });
+
+const allAddresses = {
+  ...ENVIRONMENT,
+  WEB_PUBLIC_ORIGIN: "https://127.0.0.1:8443", WEB_CLIENT_ORIGINS: "",
+  WEB_ALLOW_INSECURE_HTTP: "false", SERVER_HTTPS_ANY_HOST: "true", SERVER_HTTPS_WEB_PORTS: "8443,443",
+};
+
+test("HTTPS on all addresses supports login, setup and navigation on new hosts", async () => {
+  for (const origin of ["https://100.80.70.60:8443", "https://device.example.invalid", "https://[fd00::1]:8443"]) {
+    for (const path of [["auth", "sessions"], ["setup", "owner"]]) {
+      const response = await proxyV2ApiRequest(request(origin, { extra: {
+        Forwarded: "host=elsewhere.invalid;proto=http", "X-Forwarded-Host": "elsewhere.invalid",
+      } }), path, { environment: allAddresses, fetchImplementation: async (url, init) => {
+        assert.equal(String(url), `http://127.0.0.1:8000/api/v2/${path.join("/")}`);
+        assert.equal(init.headers.get("host"), new URL(origin).host);
+        assert.equal(init.headers.get("origin"), origin);
+        assert.equal(init.headers.get("forwarded"), null);
+        assert.equal(init.headers.get("x-forwarded-host"), null);
+        return new Response(null, { status: 204 });
+      } });
+      assert.equal(response.status, 204);
+    }
+    const response = await guardAuthenticatedNavigation(new Request("http://0.0.0.0:3000/library", {
+      headers: { Host: new URL(origin).host },
+    }), { environment: allAddresses, fetchImplementation: async () => Response.json(CAPABILITIES) });
+    assert.equal(response.headers.get("location"), `${origin}/login`);
+  }
+});
+
+test("HTTPS on all addresses verifies Host, Web port, and same-origin writes before forwarding", async () => {
+  const origin = "https://new.example.invalid:8443";
+  for (const variation of [
+    { suppliedOrigin: "https://other.example.invalid:8443" }, { suppliedOrigin: null },
+    { suppliedOrigin: "http://new.example.invalid:8443" },
+    { host: "new.example.invalid:9443", suppliedOrigin: "https://new.example.invalid:9443" },
+    { extra: { "Sec-Fetch-Site": "same-site" } },
+    { host: "new..invalid:8443", method: "GET", suppliedOrigin: null },
+    { host: "%6eew.example.invalid:8443", method: "GET", suppliedOrigin: null },
+    { host: "127.1:8443", method: "GET", suppliedOrigin: null },
+    { host: "new.example.invalid:8443/extra", method: "GET", suppliedOrigin: null },
+  ]) {
+    const req = request(origin, variation);
+    const response = await proxyV2ApiRequest(req, ["auth", "sessions"], { environment: allAddresses,
+      fetchImplementation: () => assert.fail("Unvalidated browser authority reached the backend") });
+    assert.equal(response.status, 403, JSON.stringify(variation));
+  }
+  assert.equal(runtimeConfiguration({ ...allAddresses, WEB_PUBLIC_ORIGIN: "http://localhost:8443" }), null);
+  assert.equal(runtimeConfiguration({ ...allAddresses, SERVER_HTTPS_WEB_PORTS: undefined }), null);
+  const automatic = await proxyAutomaticOwnerSessionRequest(new Request("http://0.0.0.0:3000/api/auth/single-user-session", {
+    method: "POST", headers: { Host: "127.0.0.1:8443", Origin: "https://127.0.0.1:8443" },
+  }), { environment: allAddresses, fetchImplementation: () => assert.fail("Unexpected automatic session") });
+  assert.equal(automatic.status, 403);
+});

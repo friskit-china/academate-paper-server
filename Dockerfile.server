@@ -79,7 +79,6 @@ ENV RUNTIME_EDITION=SERVER \
     SINGLE_USER_AUTO_LOGIN_ENABLED=false \
     SERVER_WEB_ENABLED=true \
     SERVER_API_BIND_HOST=0.0.0.0 \
-    WEB_PUBLIC_ORIGIN=http://127.0.0.1:3000 \
     NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
 COPY --from=web-builder /web/scripts/smoke-next-standalone.mjs /opt/academate-web/smoke-next-standalone.mjs

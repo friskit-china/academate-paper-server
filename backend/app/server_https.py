@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 from collections.abc import Mapping
+from contextlib import suppress
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -42,11 +43,14 @@ def configure_proxy(environment: Mapping[str, str], *, web_port: int, api_port: 
     key = environment.get("SERVER_HTTPS_KEY_FILE", "")
     if bool(certificate) != bool(key):
         raise ValueError("Both certificate and private key are required")
-    if 8080 in (web_port, api_port, web_tls, api_tls) and not certificate:
+    mode = environment.get("SERVER_HTTPS_MODE") or ("provided" if certificate else "internal")
+    if mode not in {"internal", "provided", "acme"} or bool(certificate) != (mode == "provided"):
+        raise ValueError("Use internal or acme without PEM files, or provided with both PEM files")
+    if 8080 in (web_port, api_port, web_tls, api_tls) and mode == "acme":
         raise ValueError("Automatic HTTPS reserves 8080 for ACME HTTP challenges")
     # Caddyfile has interpolation and quoting of its own. Certificate paths are the only
     # free-form values pasted into directives, so accept only paths with literal characters.
-    tls = ""
+    tls = "    tls internal\n" if mode == "internal" else ""
     if certificate:
         for path in (certificate, key):
             if not Path(path).is_absolute() or any(ord(c) < 32 or c in '{}"\\' for c in path):
@@ -58,18 +62,35 @@ def configure_proxy(environment: Mapping[str, str], *, web_port: int, api_port: 
     admin off
     skip_install_trust
     auto_https disable_redirects
-    http_port 8080
 """
-    if certificate:
-        # Clients connecting by IP omit SNI. Docker forwards to a different interface
-        # address, so fall back to the configured certificate covering both origins.
-        config += f"    default_sni {web_host}\n"
+    if mode == "acme":
+        config += "    http_port 8080\n"
+    elif 80 in (web_tls, api_tls):
+        # Even without HTTP, Caddy refuses an HTTPS listener on its configured
+        # HTTP port. Pick an unused port convention for this explicit TLS origin.
+        other = 8080 if 8080 not in (web_tls, api_tls) else 8081
+        config += f"    http_port {other}\n"
+    # Clients connecting by IP omit SNI; with container NAT their destination IP
+    # is also unavailable to Caddy. DNS clients send SNI and select their own leaf.
+    numeric_hosts = set()
+    for host in (web_host, api_host):
+        with suppress(ValueError):
+            numeric_hosts.add(str(ip_address(host)))
+    if mode == "internal" and len(numeric_hosts) > 1:
+        raise ValueError("Use one IP with two ports, DNS names, or a PEM covering both IPs")
+    if numeric_hosts or certificate:
+        default_sni = next(iter(numeric_hosts)) if len(numeric_hosts) == 1 else web_host
+        config += f"    default_sni {default_sni}\n"
     config += "}\n"
+    bind = environment.get("SERVER_HTTPS_BIND_HOST")
+    if bind and "%" in bind:
+        raise ValueError("Use a numeric bind address without an interface scope")
+    interface = f"    bind {ip_address(bind)}\n" if bind else ""
     config += f"""{web} {{
-{tls}    reverse_proxy 127.0.0.1:{web_port}
+{interface}{tls}    reverse_proxy 127.0.0.1:{web_port}
 }}
 {api} {{
-{tls}    route {{
+{interface}{tls}    route {{
         @browserCredentials header Cookie *
         respond @browserCredentials 403
         @native path /api/v2/*

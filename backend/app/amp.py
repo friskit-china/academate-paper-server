@@ -29,7 +29,7 @@ from app.infrastructure.security import ScryptPasswordHasher
 from app.infrastructure.tasks import DatabaseTaskQueue
 from app.infrastructure.worker_runtime import DatabaseWorkerHeartbeatStore
 from app.server import ServerProcessError, apply_server_defaults, installation_lock_path
-from app.server_health import _api_ready, _readonly_engine, _web_ready
+from app.server_health import _api_ready, _https_ready, _readonly_engine, _web_ready
 
 
 def await_start(report: dict) -> dict:
@@ -40,6 +40,8 @@ def await_start(report: dict) -> dict:
         if (
             report["server"] == "running" and _api_ready(api_port)
             and ("web" not in report["components"] or _web_ready(web_port))
+            and (not os.environ.get("SERVER_HTTPS_API_ORIGIN")
+                 or ("https" in report["components"] and _https_ready(os.environ)))
         ):
             return report
         time.sleep(0.2)

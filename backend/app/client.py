@@ -590,7 +590,7 @@ class SafeArgumentParser(argparse.ArgumentParser):
 
 def parser() -> argparse.ArgumentParser:
     result = SafeArgumentParser(description=__doc__)
-    result.add_argument("--server", required=True, help="Server origin, e.g. http://127.0.0.1:8000")
+    result.add_argument("--server", required=True, help="Server origin, e.g. https://127.0.0.1:9443")
     result.add_argument("--account", default="", help="Account name; required except for info")
     result.add_argument("--state-dir", type=Path, help="Private client state directory")
     commands = result.add_subparsers(dest="command", required=True, parser_class=SafeArgumentParser)

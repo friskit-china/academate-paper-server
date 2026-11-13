@@ -19,7 +19,7 @@ cd academate-paper-server
 ./deploy/native-install/install.sh
 ```
 
-安装完成后，打开终端打印的一次性设置链接，设置至少 12 个字符的密码。个人账号固定为 `admin`，之后登录只需密码。使用默认设置时，Web 地址为 `http://127.0.0.1:3000`，原生客户端连接 `http://127.0.0.1:8000`。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。
+安装完成后，按下文「信任实例根证书」将根证书加入本机信任库，再打开终端打印的一次性 HTTPS 设置链接，设置至少 12 个字符的密码。个人账号固定为 `admin`，之后登录只需密码。使用默认设置时，Web 地址为 `https://127.0.0.1:8443`，原生客户端连接 `https://127.0.0.1:9443`。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。
 
 向导默认将 `amp` 链接放在 `~/.local/bin`。若终端找不到该命令，可将这个目录加入当前 shell 的 PATH。
 
@@ -33,7 +33,7 @@ amp status
 ```sh
 ./deploy/native-install/install.sh \
   --prefix "$HOME/AcadeMatePaper" --bin-dir "$HOME/.local/bin" \
-  --web-port 3000 --api-port 8000
+  --web-port 8443 --api-port 9443
 ```
 
 直装提供 macOS 和 Linux 的 arm64 与 x86_64 依赖锁。Linux 需要 glibc 2.28 或更高版本。引导阶段使用 POSIX shell、curl、SHA-256 校验工具及支持 bzip2 的 tar，或系统已有的 Python 3。
@@ -45,18 +45,39 @@ amp status
 ```sh
 docker build -f Dockerfile.server -t academatepaper/server:local . && \
 docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
-  -p 127.0.0.1:3000:3000 -p 127.0.0.1:8000:8000 \
+  -p 127.0.0.1:8443:8443 -p 127.0.0.1:9443:9443 \
   --mount type=volume,source=acade-paper-data,target=/data \
   academatepaper/server:local
 ```
 
-用 `docker inspect -f '{{.State.Health.Status}}' acade-paper` 查看启动状态。出现 `healthy` 后，在自己的终端运行下面的命令，打开输出的一次性链接，完成密码设置。
+用 `docker inspect -f '{{.State.Health.Status}}' acade-paper` 查看启动状态。出现 `healthy` 后，先用下面的命令导出根证书，按下一节说明信任它，再打开终端输出的一次性 HTTPS 链接设置密码。
 
 ```sh
+docker cp acade-paper:/data/https/caddy/pki/authorities/local/root.crt ./academate-paper-ca.crt
 docker exec -it acade-paper python -m app.container_entry setup prepare-container-setup
 ```
 
-后续从浏览器打开 `http://127.0.0.1:3000`。运行 `docker exec -it acade-paper sh` 可进入容器使用 `amp`，也可以直接运行 `docker exec acade-paper amp status`。若容器本身已停止，在宿主机运行 `docker start acade-paper`。
+后续从浏览器打开 `https://127.0.0.1:8443`。运行 `docker exec -it acade-paper sh` 可进入容器使用 `amp`，也可以直接运行 `docker exec acade-paper amp status`。若容器本身已停止，在宿主机运行 `docker start acade-paper`。
+
+### 信任实例根证书
+
+新安装默认只在本机提供 HTTPS。不指定 `--cert` 和 `--key` 时，Server 首次启动会创建这个实例专用的自签根证书（CA），并自动为访问地址签发和续期服务证书。每台使用该服务的设备只需信任该实例的根证书一次。沿用原安装数据即可保留这份信任。
+
+直装用户可以在宿主机执行以下命令导出根证书。Docker 用户使用上节的 `docker cp` 命令。请从自己管理的实例取得并分发这个公开的 `.crt` 文件，私钥留在服务端。
+
+```sh
+cp "$HOME/AcadeMatePaper/data/https/caddy/pki/authorities/local/root.crt" ./academate-paper-ca.crt
+```
+
+- macOS：在「钥匙串访问」将证书导入「登录」钥匙串，打开证书，在「信任」里将 SSL 设为「始终信任」。
+- Ubuntu / Debian：运行 `sudo install -m 0644 academate-paper-ca.crt /usr/local/share/ca-certificates/academate-paper-ca.crt`，再运行 `sudo update-ca-certificates`。
+- iPhone / iPad：通过可信渠道将证书传到设备，安装描述文件后，到「设置 → 通用 → 关于本机 → 证书信任设置」对该根证书启用完全信任。其他系统或使用独立信任库的客户端，请将同一根证书导入其受信任的根证书库。
+
+也可只为单次命令指定根证书，验证原生 API 的 HTTPS 连接：
+
+```sh
+curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
+```
 
 ## 服务管理
 
@@ -71,33 +92,33 @@ docker exec -it acade-paper python -m app.container_entry setup prepare-containe
 
 ## HTTPS 与其他设备访问
 
-默认 HTTP 地址用于本机。要从手机或另一台电脑连接，请配置客户端可访问的 HTTPS 地址。下面的示例用同一主机名的两个端口，浏览器访问 `https://paper.home.arpa:8443`，原生客户端连接 `https://paper.home.arpa:9443`，API 路径前缀为 `/api/v2`。请将示例主机名换成实际可解析的名称，并使用包含该名称的证书。使用私有 CA 时，访问设备需要信任其根证书。
+要从其他设备访问，可为 Web 和 API 选同一个局域网名称的两个端口。以下示例假定 `paper.home.arpa` 在客户端能解析为服务器的局域网 IP。也可以换成服务器的固定局域网 IP；连接时使用与配置完全一致的地址。
 
-直装用户在实例目录中设置证书和私钥的实际路径，然后重新启动。
+直装用户从实例目录运行以下命令。重新启动后，浏览器使用 `https://paper.home.arpa:8443`，原生客户端使用 `https://paper.home.arpa:9443`。已有 HTTP 直装实例也可以用此流程切换；只在本机使用时，直接运行 `./bin/configure-https` 即可配置默认 HTTPS。
 
 ```sh
 cd "$HOME/AcadeMatePaper"
 ./bin/amp stop
-./bin/configure-https \
-  --web-origin https://paper.home.arpa:8443 --api-origin https://paper.home.arpa:9443 \
-  --cert /absolute/path/fullchain.pem --key /absolute/path/privkey.pem
+./bin/configure-https --web-origin https://paper.home.arpa:8443 --api-origin https://paper.home.arpa:9443
 ./bin/amp start
 ```
 
-Docker 用户从上一节构建的镜像启动，在 `docker run` 中改为发布 TLS 端口，并将证书目录只读挂载到容器。容器服务用户 UID 10001 须能读取私钥。
+Docker 用户使用同一镜像。以下命令将两个端口发布到宿主机网络接口。更改已有容器前，先按下一节备份，再停止并移除旧容器，重新挂载原来的卷。设置两个 HTTPS 地址也可将原先的 HTTP 卷迁移到 HTTPS。
 
 ```sh
 docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
   -p 8443:8443 -p 9443:9443 \
   -e WEB_PUBLIC_ORIGIN=https://paper.home.arpa:8443 \
   -e SERVER_HTTPS_API_ORIGIN=https://paper.home.arpa:9443 \
-  -e SERVER_HTTPS_CERT_FILE=/tls/fullchain.pem -e SERVER_HTTPS_KEY_FILE=/tls/privkey.pem \
-  --mount type=bind,source=/absolute/path/tls,target=/tls,readonly \
   --mount type=volume,source=acade-paper-data,target=/data \
   academatepaper/server:local
 ```
 
-若已创建 HTTP 容器，先按下节备份并停止、移除旧容器，再用原卷运行 HTTPS 容器。替换自备证书后执行 `amp restart`。如果有两个公网域名，可让它们解析到同一主机，为 Web 和 API 分别设置 `https://域名` 的地址，省略自备证书与密钥参数，由 Caddy 自动签发和续期。此模式需允许公网访问 443；Docker 发布 `-p 443:443`，直装服务账号需要监听该端口的权限。
+**使用已有证书**时，在安装向导或 `configure-https` 命令后同时加上 `--cert /absolute/path/fullchain.pem --key /absolute/path/privkey.pem`。Docker 则在 `docker run` 增加 `--mount type=bind,source=/absolute/path/tls,target=/tls,readonly`、`-e SERVER_HTTPS_CERT_FILE=/tls/fullchain.pem` 和 `-e SERVER_HTTPS_KEY_FILE=/tls/privkey.pem`。证书应覆盖两个入口的主机名或 IP，容器服务用户（UID 10001）需要读取私钥的权限。替换证书后请运行 `amp restart`。
+
+**使用公网 CA** 时，给 Web、API 设置不同的可解析公网域名，两者都用 HTTPS 默认端口。直装增加 `--acme`，Docker 增加 `-e SERVER_HTTPS_MODE=acme` 并发布 `-p 443:443`。此模式需要公网能访问 443，直装服务账号也需要监听该端口的权限。
+
+升级已有实例时，直装恢复原配置，Docker 使用原数据卷和原启动参数会保留其协议。仍需本机 HTTP 的新直装实例可显式选择 `--http-loopback`。Docker 可显式设置 `-e WEB_PUBLIC_ORIGIN=http://127.0.0.1:3000` 并只发布 `-p 127.0.0.1:3000:3000 -p 127.0.0.1:8000:8000`。
 
 ## 备份、升级和卸载
 

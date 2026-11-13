@@ -9,9 +9,11 @@ import http.client
 import json
 import math
 import os
+import socket
 import sqlite3
+import ssl
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ from app.infrastructure.db import build_session_factory
 from app.infrastructure.runtime_installation import DatabaseWorkerReadinessProbe
 from app.infrastructure.schema_revision import DatabaseSchemaRevisionInvariant
 from app.infrastructure.worker_runtime import DatabaseWorkerHeartbeatStore
+from app.server_https import authority
 
 DEFAULT_STATUS_FILE = Path("/tmp/academate-server-status.json")
 STATUS_MAX_AGE_SECONDS = 10.0
@@ -136,6 +139,39 @@ def _web_ready(port: int) -> bool:
         connection.close()
 
 
+def _https_ready(environment: Mapping[str, str]) -> bool:
+    """Probe local listeners with the actual Web/API names even behind NAT or split DNS."""
+    try:
+        pem = environment.get("SERVER_HTTPS_CERT_FILE")
+        mode = environment.get("SERVER_HTTPS_MODE") or ("provided" if pem else "internal")
+        root = Path(environment["STORAGE_ROOT"]) / "https/caddy/pki/authorities/local/root.crt"
+        if mode == "internal":
+            context = ssl.create_default_context(cafile=str(root))
+        elif mode == "provided" and pem:
+            # An operator's chain need not be in the container's public trust store.
+            context = ssl.create_default_context(cafile=pem)
+            context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        elif mode == "acme":
+            context = ssl.create_default_context()
+            if root.is_file():
+                # Older automatic-issuer configs could contain local/private names, too.
+                context.load_verify_locations(cafile=str(root))
+        else:
+            return False
+        bind = environment.get("SERVER_HTTPS_BIND_HOST")
+        target = bind or "127.0.0.1"
+        if target in ("::", "0.0.0.0"):
+            target = "::1" if target == "::" else "127.0.0.1"
+        for origin in ("WEB_PUBLIC_ORIGIN", "SERVER_HTTPS_API_ORIGIN"):
+            host, port = authority(environment[origin])
+            with (socket.create_connection((target, port), timeout=0.75) as client,
+                  context.wrap_socket(client, server_hostname=host)):
+                pass
+        return True
+    except (OSError, ValueError, KeyError):
+        return False
+
+
 def _readonly_engine(database_url: str):
     url = make_url(database_url)
     if url.get_backend_name() != "sqlite" or not url.database or url.database == ":memory:":
@@ -161,6 +197,7 @@ def probe_server(
     pid_alive: Callable[[int], bool] = _pid_alive,
     api_ready: Callable[[int], bool] = _api_ready,
     web_ready: Callable[[int], bool] = _web_ready,
+    https_ready: Callable[[], bool] | None = None,
 ) -> ServerHealth:
     """Observe existing state only; never create/upgrade a database or issue bootstrap proof."""
     clock = time.time() if now is None else now
@@ -176,6 +213,8 @@ def probe_server(
             raise HealthCheckFailed("SERVER_WEB_UNAVAILABLE")
         if (web_enabled or "web" in components) and not web_ready(web_port):
             raise HealthCheckFailed("SERVER_WEB_UNAVAILABLE")
+        if https_ready is not None and ("https" not in components or not https_ready()):
+            raise HealthCheckFailed("SERVER_HTTPS_UNAVAILABLE")
         if not api_ready(api_port):
             raise HealthCheckFailed("SERVER_API_UNAVAILABLE")
         engine = _readonly_engine(settings.database_url)
@@ -228,6 +267,8 @@ def main() -> int:
             api_port=port,
             web_enabled=os.environ.get("SERVER_WEB_ENABLED", "false").lower() == "true",
             web_port=web_port,
+            https_ready=(lambda: _https_ready(os.environ))
+            if os.environ.get("SERVER_HTTPS_API_ORIGIN") else None,
         )
     except Exception:
         report = ServerHealth(False, "SERVER_CONFIGURATION_INVALID")

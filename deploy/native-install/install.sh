@@ -5,12 +5,20 @@ umask 077
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 usage() {
     echo 'Usage: install.sh [--prefix DIRECTORY] [--bin-dir DIRECTORY] [--web-port N] [--api-port N] [--restore-from DIRECTORY] [--no-start]'
+    echo '       HTTPS options: [--web-origin URL --api-origin URL] [--cert PEM --key PEM | --acme]'
+    echo '       Local HTTP: --http-loopback (fresh installations use HTTPS by default)'
     echo '       install.sh --uninstall [--prefix DIRECTORY] [--bin-dir DIRECTORY]'
 }
 prefix=
 bin_dir=
-web_port=3000
-api_port=8000
+web_port=
+api_port=
+web_origin=
+api_origin=
+cert=
+key=
+acme=no
+http=no
 start=yes
 restore=
 uninstall=no
@@ -20,7 +28,9 @@ while [ "$#" -gt 0 ]; do
         --help|-h) usage; exit 0 ;;
         --uninstall) uninstall=yes; shift; continue ;;
         --no-start) start=no; shift; continue ;;
-        --prefix|--bin-dir|--web-port|--api-port|--restore-from)
+        --acme) acme=yes; shift; continue ;;
+        --http-loopback) http=yes; shift; continue ;;
+        --prefix|--bin-dir|--web-port|--api-port|--restore-from|--web-origin|--api-origin|--cert|--key)
             [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
             case "$1" in
                 --prefix) prefix=$2 ;;
@@ -28,6 +38,10 @@ while [ "$#" -gt 0 ]; do
                 --web-port) web_port=$2 ;;
                 --api-port) api_port=$2 ;;
                 --restore-from) restore=$2 ;;
+                --web-origin) web_origin=$2 ;;
+                --api-origin) api_origin=$2 ;;
+                --cert) cert=$2 ;;
+                --key) key=$2 ;;
             esac
             shift 2 ;;
         *) usage >&2; exit 2 ;;
@@ -69,11 +83,37 @@ if [ "$uninstall" = yes ]; then
     fi
     exec "$python" -IB "$here/uninstall.py" "$prefix" "$bin_dir"
 fi
+if { [ -n "$cert" ] && [ -z "$key" ]; } || { [ -n "$key" ] && [ -z "$cert" ]; }; then
+    echo '请同时指定 --cert 和 --key。' >&2; exit 2
+fi
+if { [ -n "$web_origin" ] && [ -z "$api_origin" ]; } || { [ -n "$api_origin" ] && [ -z "$web_origin" ]; }; then
+    echo '请同时指定 --web-origin 和 --api-origin。' >&2; exit 2
+fi
+if [ -n "$web_origin" ] && [ -n "$web_port$api_port" ]; then
+    echo '请在 URL 中填写端口，或单独使用端口参数。' >&2; exit 2
+fi
+if { [ "$http" = yes ] && { [ -n "$web_origin$cert" ] || [ "$acme" = yes ]; }; } ||
+   { [ -n "$cert" ] && [ "$acme" = yes ]; }; then
+    echo 'HTTP、自有证书和公网 ACME 是不同的部署选项。' >&2; exit 2
+fi
+if [ -n "$cert" ] && { [ ! -f "$cert" ] || [ ! -r "$cert" ] || [ ! -f "$key" ] || [ ! -r "$key" ]; }; then
+    echo '证书和密钥须为当前用户可读取的文件。' >&2; exit 2
+fi
+if [ "$acme" = yes ] && [ -z "$web_origin" ]; then
+    echo '公网 ACME 需要 --web-origin 和 --api-origin。' >&2; exit 2
+fi
 for port in "$web_port" "$api_port"; do
+    [ -n "$port" ] || continue
     case "$port" in ''|*[!0-9]*) echo "端口必须是 1–65535。" >&2; exit 2 ;; esac
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo "端口必须是 1–65535。" >&2; exit 2; }
 done
-[ "$api_port" -ne "$web_port" ] || { echo "API 和 Web 需要不同端口。" >&2; exit 2; }
+if [ "$http" = yes ]; then
+    default_web=3000; default_api=8000
+else
+    default_web=8443; default_api=9443
+fi
+[ "${api_port:-$default_api}" -ne "${web_port:-$default_web}" ] ||
+    { echo "API 和 Web 需要不同端口。" >&2; exit 2; }
 case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) platform=osx-arm64; hash=bd5b8d3f151c3ad2d92f0fb918806543d713c7f67895c020db4041097a7f004d ;;
     Darwin-x86_64) platform=osx-64; hash=49c2375bc7553287404f3e348494f3dc7f7987bcd99fe996d2099a654b384b95 ;;
@@ -143,7 +183,11 @@ if [ ! -x "$release/runtime/bin/python" ] || ! cmp -s "$here/locks/$platform.txt
         -p "$release/runtime" -f "$here/locks/$platform.txt"
     cp "$here/locks/$platform.txt" "$release/runtime.lock"
 fi
+set -- "$prefix" "$bin_dir" "$web_port" "$api_port" "$start" "$restore"
+if [ -n "$web_origin" ]; then set -- "$@" --web-origin "$web_origin" --api-origin "$api_origin"; fi
+if [ -n "$cert" ]; then set -- "$@" --cert "$cert" --key "$key"; fi
+if [ "$acme" = yes ]; then set -- "$@" --acme; fi
+if [ "$http" = yes ]; then set -- "$@" --http-loopback; fi
 env -i "HOME=$prefix/home" "PATH=$release/runtime/bin:/usr/bin:/bin" \
     "PYTHONNOUSERSITE=1" "PYTHONDONTWRITEBYTECODE=1" \
-    "$release/runtime/bin/python" "$here/install.py" \
-    "$prefix" "$bin_dir" "$web_port" "$api_port" "$start" "$restore"
+    "$release/runtime/bin/python" "$here/install.py" "$@"

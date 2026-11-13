@@ -19,6 +19,10 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from configure_https import (
+    TRANSPORT_KEYS, add_transport_options, check_options, configure_http, configure_tls,
+    install_tls_proxy, show_access,
+)
 from install_tex import install as install_tex
 
 SOURCE = Path(__file__).resolve().parents[2]
@@ -215,7 +219,40 @@ def restore_data(root, source, settings):
             target.rename(root / "data")
 
 
-def instance_settings(root, web_port, api_port, source=None):
+def set_install_transport(settings, source, web_port, api_port, web_origin, api_origin, cert, key,
+                          acme, http_loopback):
+    if source and not any((web_port, api_port, web_origin, cert, acme, http_loopback)):
+        previous = json.loads((source / "instance.json").read_text())
+        settings.update({k: previous[k] for k in TRANSPORT_KEYS if k in previous})
+        # A copied data tree may contain operator-supplied PEMs as well as Caddy's PKI.
+        for key_name in ("SERVER_HTTPS_CERT_FILE", "SERVER_HTTPS_KEY_FILE"):
+            if settings.get(key_name):
+                pem = Path(settings[key_name])
+                previous_data = Path(previous["STORAGE_ROOT"])
+                # Canonicalize the containing directory, preserving any live PEM symlink.
+                original = pem.parent.resolve() / pem.name
+                if original.is_relative_to(previous_data.resolve()):
+                    relative = original.relative_to(previous_data.resolve())
+                    settings[key_name] = str(Path(settings["STORAGE_ROOT"]) / relative)
+        if settings.get("SERVER_HTTPS_API_ORIGIN") and not settings.get("SERVER_HTTPS_MODE"):
+            # Older installations left Caddy in charge of ACME and local issuance.
+            # Preserve their existing proxy policy and PKI when restoring a backup.
+            if settings.get("SERVER_HTTPS_CERT_FILE"):
+                settings["SERVER_HTTPS_MODE"] = "provided"
+            else:
+                settings["SERVER_HTTPS_MODE"] = "acme"
+        return
+    if http_loopback:
+        configure_http(settings, web_port or 3000, api_port or 8000)
+    else:
+        web = web_origin or f"https://127.0.0.1:{web_port or 8443}"
+        api = api_origin or f"https://127.0.0.1:{api_port or 9443}"
+        configure_tls(settings, web, api, cert=cert, key=key, acme=acme)
+
+
+def instance_settings(root, web_port, api_port, source=None, *, web_origin=None, api_origin=None,
+                      cert=None, key=None, acme=False, http_loopback=False):
+    transport = (source, web_port, api_port, web_origin, api_origin, cert, key, acme, http_loopback)
     path = root / "instance.json"
     data = root / "data"
     directories = ("database", "papers", "exports", "tmp", "run")
@@ -232,6 +269,9 @@ def instance_settings(root, web_port, api_port, source=None):
                 restore_data(root, source, settings)
         for name in directories:
             (data / name).mkdir(parents=True, mode=0o700, exist_ok=True)
+        # A failed certificate check or download can be retried with corrected arguments.
+        if any((web_port, api_port, web_origin, cert, acme, http_loopback)):
+            set_install_transport(settings, *transport)
         return settings
     if data.exists():
         raise FileExistsError("实例目录已有 data 而缺少 instance.json，不能覆盖。")
@@ -251,18 +291,14 @@ def instance_settings(root, web_port, api_port, source=None):
         "APP_HOST": "127.0.0.1",
         "SERVER_API_BIND_HOST": "127.0.0.1",
         "SERVER_WEB_BIND_HOST": "127.0.0.1",
-        "SERVER_WEB_PORT": str(web_port),
-        "SERVER_API_PORT": str(api_port),
-        "APP_PORT": str(api_port),
         "SERVER_WEB_ENABLED": "true",
-        "WEB_PUBLIC_ORIGIN": f"http://127.0.0.1:{web_port}",
-        "WEB_SESSION_COOKIE_SECURE": "false",
         "INTERNAL_SERVICE_TOKEN": secrets.token_hex(32),
         "CREDENTIAL_INSTALLATION_ID": str(uuid.uuid4()),
         "CREDENTIAL_MASTER_KEY_B64": base64.b64encode(secrets.token_bytes(32)).decode(
             "ascii"
         ),
     }
+    set_install_transport(settings, *transport)
     if source:
         restore_data(root, source, settings)
     else:
@@ -298,7 +334,7 @@ def prepare_setup(env, backend):
     )
 
 
-def install(root, bin_dir, web_port, api_port, start, source=None):
+def install(root, bin_dir, web_port, api_port, start, source=None, **transport):
     release = Path(sys.executable).resolve().parents[2]
     cache = root / "cache"
     private_env = {
@@ -347,7 +383,10 @@ def install(root, bin_dir, web_port, api_port, start, source=None):
         / ("libgs.dylib" if sys.platform == "darwin" else "libgs.so")
     )
     private_file(release / "environment.json", json.dumps(environment, indent=2))
-    settings = instance_settings(root, web_port, api_port, source)
+    settings = instance_settings(root, web_port, api_port, source, **transport)
+    if settings.get("SERVER_HTTPS_API_ORIGIN"):
+        install_tls_proxy(root, settings)
+    private_file(root / "instance.json", json.dumps(settings, indent=2) + "\n")
     env = {**environment, **settings}
     run(
         [sys.executable, "-m", "app.runtime_check", "--profile", "worker"],
@@ -377,6 +416,7 @@ def install(root, bin_dir, web_port, api_port, start, source=None):
     print(
         f"如需重新生成首次设置链接，可运行 {shlex.quote(str(root / 'bin' / 'setup-url'))}。"
     )
+    show_access(settings)
     if start:
         run([amp, "start"], cwd=backend, env=env)
         prepare_setup(env, backend)
@@ -386,17 +426,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("bin_dir", type=Path)
-    parser.add_argument("web_port", type=int)
-    parser.add_argument("api_port", type=int)
+    parser.add_argument("web_port")
+    parser.add_argument("api_port")
     parser.add_argument("start", choices=("yes", "no"))
     parser.add_argument("source", nargs="?", default="")
+    add_transport_options(parser)
     args = parser.parse_args()
+    check_options(parser, args)
+    if args.web_origin and (args.web_port or args.api_port):
+        parser.error("Set origins or ports; HTTPS origin URLs already contain their ports")
     source = Path(args.source) if args.source else None
     install(
         args.root.resolve(),
         args.bin_dir,
-        args.web_port,
-        args.api_port,
+        int(args.web_port) if args.web_port else None,
+        int(args.api_port) if args.api_port else None,
         args.start == "yes",
-        source,
+        source, web_origin=args.web_origin, api_origin=args.api_origin,
+        cert=args.cert, key=args.key, acme=args.acme, http_loopback=args.http_loopback,
     )

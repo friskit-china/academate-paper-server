@@ -29,6 +29,8 @@
 
 ## 部署
 
+**两种安装方式任选其一。** 如果希望将服务直接装在 macOS 或 Linux 上，请选[安装方式 1](#安装方式-1macoslinux-直接安装)。如果使用 Docker，请选[安装方式 2](#安装方式-2docker-容器安装)。
+
 新安装默认在所有可用网络接口提供 HTTPS，Web 端口为 `8443`，原生 App 的 API 端口为 `9443`。在服务器本机可用 `127.0.0.1`；在其他设备使用能到达服务器的 IP 或域名。例如服务器名为 `paper` 时，浏览器打开 `https://paper:8443`，App 填写 `https://paper:9443`。服务按端口区分 Web 与 API，新增访问地址无需登记。
 
 克隆仓库并进入源码目录，或下载源码压缩包后解压。以下命令均从仓库根目录执行。
@@ -38,7 +40,7 @@ git clone https://github.com/friskit-china/academate-paper-server.git
 cd academate-paper-server
 ```
 
-### macOS / Linux 直装
+### 安装方式 1：macOS/Linux 直接安装
 
 以日常用户运行安装向导，选择一个由自己拥有的空目录。默认位置为 `~/AcadeMatePaper`。首次安装需联网下载 Python、Node、完整 TeX Live、字体等依赖并构建 Web，请预留下载时间和磁盘空间。运行时、数据及安装缓存都会放在所选目录内。
 
@@ -46,7 +48,7 @@ cd academate-paper-server
 ./deploy/native-install/install.sh
 ```
 
-安装完成后，将下文的实例根证书加入浏览器的信任库，打开安装向导打印的一次性 HTTPS 链接，为个人账号 `admin` 设置至少 12 个字符的密码。以后登录只需密码。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。
+安装完成后，打开向导打印的一次性 HTTPS 链接，为个人账号 `admin` 设置至少 12 个字符的密码。以后登录只需密码。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。如果浏览器提示证书不受信任，请参阅[可选步骤：信任证书](#可选步骤信任证书)。
 
 向导默认将 `amp` 链接放在 `~/.local/bin`。若终端找不到该命令，可将这个目录加入当前 shell 的 PATH。
 
@@ -65,7 +67,7 @@ amp status
 
 直装提供 macOS 和 Linux 的 arm64 与 x86_64 依赖锁。Linux 需要 glibc 2.28 或更高版本。引导阶段使用 POSIX shell、curl、SHA-256 校验工具及支持 bzip2 的 tar，或系统已有的 Python 3。
 
-### Docker 单容器
+### 安装方式 2：Docker 容器安装
 
 在仓库根目录启动 Docker Compose。它从源码构建镜像，创建 `acade-paper` 容器，在宿主网络接口发布 Web 和 API，并用 `acade-paper-data` 卷保存实例数据。
 
@@ -85,26 +87,33 @@ docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
   academatepaper/server:local
 ```
 
-用 `docker inspect -f '{{.State.Health.Status}}' acade-paper` 查看启动状态。出现 `healthy` 后，先用下面的命令导出根证书，按下一节说明信任它，再打开终端输出的一次性 HTTPS 链接设置密码。
+用 `docker inspect -f '{{.State.Health.Status}}' acade-paper` 查看启动状态。出现 `healthy` 后，运行以下命令，打开终端输出的一次性 HTTPS 链接设置密码。如果浏览器提示证书不受信任，请参阅[可选步骤：信任证书](#可选步骤信任证书)。
 
 ```sh
-docker cp acade-paper:/data/https/caddy/pki/authorities/local/root.crt ./academate-paper-ca.crt
 docker exec -it acade-paper python -m app.container_entry setup prepare-container-setup
 ```
 
 后续从浏览器打开 `https://127.0.0.1:8443`。运行 `docker exec -it acade-paper sh` 可进入容器使用 `amp`，也可以直接运行 `docker exec acade-paper amp status`。若容器本身已停止，在宿主机运行 `docker start acade-paper`。
 
-### 信任实例根证书
+### 可选步骤：信任证书
 
-首次启动时，Server 自动创建实例根证书（CA），为配置的 HTTPS 主地址和别名签发并续期服务证书。浏览器需要信任这个 CA，且证书应覆盖所访问的域名或 IP。给多台设备使用时，可在安装向导填写它们都能解析的服务器域名，或提供覆盖所用地址的证书。
+如果浏览器已信任服务器证书，可以跳过本节。默认安装会创建实例专用的根证书（CA）。要让浏览器信任它，请按下方说明导出根证书，并在使用浏览器的设备上导入。访问时使用的域名或 IP 也应在服务证书的覆盖范围内。
 
 在新版 **AcadeMate Paper App** 中，可直接输入原生 API 地址（本机默认 `https://127.0.0.1:9443`）。首次遇到未受信的证书时，核对 App 显示的地址和 SHA-256 指纹后即可在 App 内信任，无需修改系统信任库。此选择只适用于当前服务器地址和端口。若证书与已记住的身份不再匹配，App 会要求重新确认。App 按输入的协议连接，显式使用 `http://` 时密码和会话会以明文传输。
 
-直装用户可以在宿主机执行以下命令导出根证书。Docker 用户使用上节的 `docker cp` 命令。请从自己管理的实例取得并分发这个公开的 `.crt` 文件，私钥留在服务端。
+在服务器上按所选安装方式导出公开的根证书。**直接安装**使用以下命令（以默认目录为例）。
 
 ```sh
 cp "$HOME/AcadeMatePaper/data/https/caddy/pki/authorities/local/root.crt" ./academate-paper-ca.crt
 ```
+
+**Docker 容器安装**使用以下命令。
+
+```sh
+docker cp acade-paper:/data/https/caddy/pki/authorities/local/root.crt ./academate-paper-ca.crt
+```
+
+将导出的 `academate-paper-ca.crt` 复制到需要信任它的设备，再按系统导入。
 
 - macOS：在「钥匙串访问」将证书导入「登录」钥匙串，打开证书，在「信任」里将 SSL 设为「始终信任」。
 - Ubuntu / Debian：运行 `sudo install -m 0644 academate-paper-ca.crt /usr/local/share/ca-certificates/academate-paper-ca.crt`，再运行 `sudo update-ca-certificates`。
@@ -116,7 +125,7 @@ cp "$HOME/AcadeMatePaper/data/https/caddy/pki/authorities/local/root.crt" ./acad
 curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
 ```
 
-## 服务管理
+## 服务 CLI
 
 | 命令 | 用途 |
 | --- | --- |

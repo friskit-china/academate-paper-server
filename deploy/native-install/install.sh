@@ -6,6 +6,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 usage() {
     echo 'Usage: install.sh [--prefix DIRECTORY] [--bin-dir DIRECTORY] [--web-port N] [--api-port N] [--restore-from DIRECTORY] [--no-start]'
     echo '       HTTPS options: [--web-origin URL --api-origin URL] [--cert PEM --key PEM | --acme]'
+    echo '       Additional HTTPS origins: [--web-aliases URL,...] [--api-aliases URL,...]'
     echo '       Local HTTP: --http-loopback (fresh installations use HTTPS by default)'
     echo '       install.sh --uninstall [--prefix DIRECTORY] [--bin-dir DIRECTORY]'
 }
@@ -15,6 +16,8 @@ web_port=
 api_port=
 web_origin=
 api_origin=
+web_aliases=
+api_aliases=
 cert=
 key=
 acme=no
@@ -30,7 +33,7 @@ while [ "$#" -gt 0 ]; do
         --no-start) start=no; shift; continue ;;
         --acme) acme=yes; shift; continue ;;
         --http-loopback) http=yes; shift; continue ;;
-        --prefix|--bin-dir|--web-port|--api-port|--restore-from|--web-origin|--api-origin|--cert|--key)
+        --prefix|--bin-dir|--web-port|--api-port|--restore-from|--web-origin|--api-origin|--web-aliases|--api-aliases|--cert|--key)
             [ "$#" -ge 2 ] && [ -n "$2" ] || { usage >&2; exit 2; }
             case "$1" in
                 --prefix) prefix=$2 ;;
@@ -40,6 +43,8 @@ while [ "$#" -gt 0 ]; do
                 --restore-from) restore=$2 ;;
                 --web-origin) web_origin=$2 ;;
                 --api-origin) api_origin=$2 ;;
+                --web-aliases) web_aliases=$2 ;;
+                --api-aliases) api_aliases=$2 ;;
                 --cert) cert=$2 ;;
                 --key) key=$2 ;;
             esac
@@ -83,6 +88,19 @@ if [ "$uninstall" = yes ]; then
     fi
     exec "$python" -IB "$here/uninstall.py" "$prefix" "$bin_dir"
 fi
+if [ "$interactive" = yes ] && [ -z "$restore$web_origin$api_origin$web_port$api_port$web_aliases$api_aliases" ] &&
+   [ "$http" = no ] && [ ! -f "$prefix/.academate-personal-server" ]; then
+    printf 'Web HTTPS 地址，含域名或 IP 和端口 [https://127.0.0.1:8443]: '
+    IFS= read -r web_origin || :
+    web_origin=${web_origin:-https://127.0.0.1:8443}
+    printf 'App API HTTPS 地址 [https://127.0.0.1:9443]: '
+    IFS= read -r api_origin || :
+    api_origin=${api_origin:-https://127.0.0.1:9443}
+    printf '其他 Web HTTPS 地址（可留空，多个用逗号分隔）: '
+    IFS= read -r web_aliases || :
+    printf '其他 API HTTPS 地址（可留空，多个用逗号分隔）: '
+    IFS= read -r api_aliases || :
+fi
 if { [ -n "$cert" ] && [ -z "$key" ]; } || { [ -n "$key" ] && [ -z "$cert" ]; }; then
     echo '请同时指定 --cert 和 --key。' >&2; exit 2
 fi
@@ -92,7 +110,7 @@ fi
 if [ -n "$web_origin" ] && [ -n "$web_port$api_port" ]; then
     echo '请在 URL 中填写端口，或单独使用端口参数。' >&2; exit 2
 fi
-if { [ "$http" = yes ] && { [ -n "$web_origin$cert" ] || [ "$acme" = yes ]; }; } ||
+if { [ "$http" = yes ] && { [ -n "$web_origin$cert$web_aliases$api_aliases" ] || [ "$acme" = yes ]; }; } ||
    { [ -n "$cert" ] && [ "$acme" = yes ]; }; then
     echo 'HTTP、自有证书和公网 ACME 是不同的部署选项。' >&2; exit 2
 fi
@@ -185,6 +203,8 @@ if [ ! -x "$release/runtime/bin/python" ] || ! cmp -s "$here/locks/$platform.txt
 fi
 set -- "$prefix" "$bin_dir" "$web_port" "$api_port" "$start" "$restore"
 if [ -n "$web_origin" ]; then set -- "$@" --web-origin "$web_origin" --api-origin "$api_origin"; fi
+if [ -n "$web_aliases" ]; then set -- "$@" --web-aliases "$web_aliases"; fi
+if [ -n "$api_aliases" ]; then set -- "$@" --api-aliases "$api_aliases"; fi
 if [ -n "$cert" ]; then set -- "$@" --cert "$cert" --key "$key"; fi
 if [ "$acme" = yes ]; then set -- "$@" --acme; fi
 if [ "$http" = yes ]; then set -- "$@" --http-loopback; fi

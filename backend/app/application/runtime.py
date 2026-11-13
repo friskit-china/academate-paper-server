@@ -6,7 +6,7 @@ from app.domain.runtime import IdentityMode, RuntimeEdition, RuntimeNetworkScope
 from app.domain.setup import InstallationMode
 
 RUNTIME_CAPABILITY_SCHEMA_VERSION = 4
-APPLICATION_VERSION = "0.1.3"
+APPLICATION_VERSION = "0.1.4"
 API_VERSION = "v1"
 DATABASE_SCHEMA_REVISION = "20261111_0033"
 

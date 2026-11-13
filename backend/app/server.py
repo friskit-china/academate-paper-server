@@ -48,6 +48,14 @@ def apply_server_defaults(environment: dict[str, str]) -> None:
     for key, value in SERVER_DEFAULTS.items():
         environment.setdefault(key, value)
     if environment.get("SERVER_HTTPS_API_ORIGIN"):
+        if any(environment.get(key) for key in ("SERVER_HTTPS_WEB_ALIASES",
+                                                "SERVER_HTTPS_API_ALIASES")):
+            from app.server_https import https_origins
+
+            web, _ = https_origins(environment)
+            for setting, required in (("WEB_CLIENT_ORIGINS", web[1:]), ("CORS_ORIGINS", web)):
+                existing = [v.strip() for v in environment.get(setting, "").split(",") if v.strip()]
+                environment[setting] = ",".join(dict.fromkeys([*existing, *required]))
         environment.update({
             "WEB_SESSION_COOKIE_SECURE": "true", "WEB_ALLOW_INSECURE_HTTP": "false",
             "RUNTIME_NETWORK_SCOPE": "PUBLIC", "SERVER_API_BIND_HOST": "127.0.0.1",

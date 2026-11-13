@@ -15,6 +15,7 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 
 from app.server import SERVER_DEFAULTS, apply_server_defaults
+from app.server_https import authority, https_origins
 
 KEYS = ("INTERNAL_SERVICE_TOKEN", "CREDENTIAL_INSTALLATION_ID", "CREDENTIAL_MASTER_KEY_B64")
 MODULES = {
@@ -23,6 +24,20 @@ MODULES = {
     "amp": "app.amp",
     "setup": "app.setup_cli",
 }
+
+
+def _select_private_ports(environment: MutableMapping[str, str], reserved: set[int]) -> None:
+    """Allow operators to publish HTTPS on the container's usual private ports."""
+    web = environment.get("SERVER_WEB_PORT")
+    api = environment.get("SERVER_API_PORT") or environment.get("APP_PORT")
+    used = {*reserved, *(int(value) for value in (web, api) if value)}
+    for key, value, default in (("SERVER_WEB_PORT", web, 3000), ("SERVER_API_PORT", api, 8000)):
+        if not value:
+            port = default
+            if port in used:
+                port = next(port for port in range(18000, 65536) if port not in used)
+                environment[key] = str(port)
+            used.add(port)
 
 
 def apply_container_network(environment: MutableMapping[str, str], *, initialize: bool) -> None:
@@ -46,7 +61,9 @@ def apply_container_network(environment: MutableMapping[str, str], *, initialize
         not web and marker.is_file()
         and environment.get("SERVER_WEB_ENABLED", "true").lower() == "true"
     )
-    if use_default_tls or tls_inputs or api:
+    aliases = any(environment.get(key) for key in ("SERVER_HTTPS_WEB_ALIASES",
+                                                    "SERVER_HTTPS_API_ALIASES"))
+    if use_default_tls or tls_inputs or api or aliases:
         web = web or "https://127.0.0.1:8443"
         api = api or "https://127.0.0.1:9443"
     else:
@@ -54,13 +71,22 @@ def apply_container_network(environment: MutableMapping[str, str], *, initialize
     environment["WEB_PUBLIC_ORIGIN"] = web
     if api:
         environment["SERVER_HTTPS_API_ORIGIN"] = api
+        web_origins, api_origins = https_origins(environment)
+        reserved = {authority(origin)[1] for origin in web_origins + api_origins}
+        _select_private_ports(environment, reserved)
         # A pre-0.1.2 installation without supplied PEMs used Caddy's automatic
         # issuer. Keep its trusted certificates on recreation with the same origins.
         if not marker.is_file() and not tls_inputs:
             config = root / "https" / "Caddyfile"
             if config.is_file():
                 previous = config.read_text().splitlines()
-                if (f"{web.rstrip('/')} {{" in previous and f"{api.rstrip('/')} {{" in previous
+                sites = {
+                    origin for line in previous
+                    if line.startswith("https://") and line.endswith(" {")
+                    for origin in line[:-2].split(", ")
+                }
+                if (sites.intersection((web.rstrip("/"), web_origins[0]))
+                        and sites.intersection((api.rstrip("/"), api_origins[0]))
                         and not any(line.lstrip().startswith("tls ") for line in previous)):
                     environment["SERVER_HTTPS_MODE"] = "acme"
     if not environment.get("CORS_ORIGINS"):

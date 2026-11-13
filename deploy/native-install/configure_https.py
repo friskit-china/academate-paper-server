@@ -26,6 +26,7 @@ PLATFORMS = {
 ROOT_CERT = Path("https/caddy/pki/authorities/local/root.crt")
 TRANSPORT_KEYS = (
     "WEB_PUBLIC_ORIGIN", "SERVER_HTTPS_API_ORIGIN", "SERVER_HTTPS_CERT_FILE",
+    "SERVER_HTTPS_WEB_ALIASES", "SERVER_HTTPS_API_ALIASES",
     "SERVER_HTTPS_KEY_FILE", "SERVER_HTTPS_MODE", "SERVER_HTTPS_BIND_HOST",
     "SERVER_WEB_PORT", "SERVER_API_PORT", "APP_PORT", "WEB_SESSION_COOKIE_SECURE",
     "WEB_ALLOW_INSECURE_HTTP", "WEB_CLIENT_ORIGINS", "RUNTIME_NETWORK_SCOPE",
@@ -69,6 +70,8 @@ def add_transport_options(parser):
     mode.add_argument("--web-origin", help="HTTPS address used by the browser")
     mode.add_argument("--http-loopback", action="store_true", help="Use local HTTP")
     parser.add_argument("--api-origin", help="HTTPS address used by native apps")
+    parser.add_argument("--web-aliases", help="Additional browser HTTPS origins, comma-separated")
+    parser.add_argument("--api-aliases", help="Additional native API HTTPS origins, comma-separated")
     parser.add_argument("--cert", type=Path, help="Full-chain PEM")
     parser.add_argument("--key", type=Path, help="Matching private key PEM")
     parser.add_argument("--acme", action="store_true", help="Use public ACME certificates")
@@ -83,7 +86,8 @@ def check_options(parser, args):
         parser.error("Both PEM paths must name files readable by this user")
     if args.acme and args.cert:
         parser.error("--acme cannot be combined with --cert and --key")
-    if args.http_loopback and (args.api_origin or args.cert or args.acme):
+    if args.http_loopback and (args.api_origin or args.cert or args.acme
+                               or args.web_aliases is not None or args.api_aliases is not None):
         parser.error("--http-loopback takes no TLS settings")
 
 
@@ -115,40 +119,46 @@ def private_ports(reserved, preferred):
     return ports
 
 
-def configure_tls(settings, web, api, *, cert=None, key=None, acme=False):
-    from app.server_https import authority
+def configure_tls(settings, web, api, *, web_aliases=None, api_aliases=None,
+                  cert=None, key=None, acme=False):
+    from app.server_https import authority, validate_proxy_origins
 
-    web_host, web_tls = authority(web)
-    api_host, api_tls = authority(api)
-    if (web_host, web_tls) == (api_host, api_tls):
-        raise ValueError("Web and API require distinct HTTPS origins")
-    bind = set()
-    for host in (web_host, api_host):
-        if host == "localhost":
-            bind.add("127.0.0.1")
-        else:
-            try:
-                address = ip_address(host)
-            except ValueError:
-                continue
-            if address.is_loopback:
-                bind.add(str(address))
-    if bind and (len(bind) > 1 or not {web_host, api_host}.issubset(bind | {"localhost"})):
-        raise ValueError("Use the same loopback address on both origins, or two LAN/public origins")
-    if acme and bind:
+    origins = {**settings, "WEB_PUBLIC_ORIGIN": web, "SERVER_HTTPS_API_ORIGIN": api,
+               "SERVER_HTTPS_CERT_FILE": str(cert) if cert else ""}
+    if web_aliases is not None:
+        origins["SERVER_HTTPS_WEB_ALIASES"] = web_aliases
+    if api_aliases is not None:
+        origins["SERVER_HTTPS_API_ALIASES"] = api_aliases
+    # Allocate the private upstream ports after reserving every public listener.
+    web_origins, api_origins, ports, _ = validate_proxy_origins(origins, web_port=0, api_port=0)
+    hosts = {authority(origin)[0] for origin in web_origins + api_origins}
+    if "localhost" in hosts:
+        hosts.remove("localhost")
+        hosts.add("127.0.0.1")
+    loopback = set()
+    for host in hosts:
+        try:
+            address = ip_address(host)
+        except ValueError:
+            continue
+        if address.is_loopback:
+            loopback.add(host)
+    if acme and loopback:
         raise ValueError("Use the local CA for loopback addresses")
-    if bind:
-        settings["SERVER_HTTPS_BIND_HOST"] = bind.pop()
+    if hosts == loopback:
+        if len(loopback) != 1:
+            raise ValueError("Use one loopback address for a loopback-only installation")
+        settings["SERVER_HTTPS_BIND_HOST"] = next(iter(loopback))
     else:
         settings.pop("SERVER_HTTPS_BIND_HOST", None)
     if settings.get("WEB_PUBLIC_ORIGIN", "").startswith("http://"):
         settings["SERVER_HTTP_LOOPBACK_WEB_PORT"] = settings["SERVER_WEB_PORT"]
         settings["SERVER_HTTP_LOOPBACK_API_PORT"] = settings["SERVER_API_PORT"]
-    web_port, api_port = private_ports(
-        {web_tls, api_tls}, (settings.get("SERVER_WEB_PORT"), settings.get("SERVER_API_PORT"))
-    )
+    web_port, api_port = private_ports(ports, (settings.get("SERVER_WEB_PORT"), settings.get("SERVER_API_PORT")))
     settings.update(
-        WEB_PUBLIC_ORIGIN=web.rstrip("/"), SERVER_HTTPS_API_ORIGIN=api.rstrip("/"),
+        WEB_PUBLIC_ORIGIN=web_origins[0], SERVER_HTTPS_API_ORIGIN=api_origins[0],
+        SERVER_HTTPS_WEB_ALIASES=",".join(web_origins[1:]),
+        SERVER_HTTPS_API_ALIASES=",".join(api_origins[1:]),
         RUNTIME_NETWORK_SCOPE="PUBLIC", WEB_SESSION_COOKIE_SECURE="true",
         SERVER_WEB_BIND_HOST="127.0.0.1", SERVER_API_BIND_HOST="127.0.0.1",
         SERVER_WEB_PORT=str(web_port), SERVER_API_PORT=str(api_port), APP_PORT=str(api_port),
@@ -172,10 +182,24 @@ def install_tls_proxy(root, settings):
         subprocess.run((command[0], "validate", *command[2:]), env=env, check=True)
 
 
+def update_tls_aliases(settings, web_aliases, api_aliases):
+    api = settings.get("SERVER_HTTPS_API_ORIGIN")
+    if not api:
+        raise ValueError("Choose HTTPS origins before adding aliases to an HTTP installation")
+    cert, key = settings.get("SERVER_HTTPS_CERT_FILE"), settings.get("SERVER_HTTPS_KEY_FILE")
+    configure_tls(settings, settings["WEB_PUBLIC_ORIGIN"], api,
+                  web_aliases=web_aliases, api_aliases=api_aliases,
+                  cert=Path(cert) if cert else None, key=Path(key) if key else None,
+                  acme=settings.get("SERVER_HTTPS_MODE") == "acme")
+
+
 def show_access(settings):
     web = settings["WEB_PUBLIC_ORIGIN"]
     api = settings.get("SERVER_HTTPS_API_ORIGIN") or f"http://127.0.0.1:{settings['SERVER_API_PORT']}"
     print(f"Web: {web}   API: {api}", flush=True)
+    for label, name in (("Web", "SERVER_HTTPS_WEB_ALIASES"), ("API", "SERVER_HTTPS_API_ALIASES")):
+        if settings.get(name):
+            print(f"{label} 别名: {settings[name]}", flush=True)
     if settings.get("SERVER_HTTPS_MODE") == "internal":
         cert = Path(settings["STORAGE_ROOT"]) / ROOT_CERT
         print(f"首次启动后，请在客户端的系统或浏览器中将此根证书导入为受信任的证书颁发机构：{cert}", flush=True)
@@ -204,7 +228,12 @@ def main():
         existing = settings.get("SERVER_HTTPS_API_ORIGIN")
         web = args.web_origin or (settings["WEB_PUBLIC_ORIGIN"] if existing else "https://127.0.0.1:8443")
         api = args.api_origin or existing or "https://127.0.0.1:9443"
-        configure_tls(settings, web, api, cert=args.cert, key=args.key, acme=args.acme)
+        if existing and not (args.web_origin or args.cert or args.acme) and (
+                args.web_aliases is not None or args.api_aliases is not None):
+            update_tls_aliases(settings, args.web_aliases, args.api_aliases)
+        else:
+            configure_tls(settings, web, api, web_aliases=args.web_aliases, api_aliases=args.api_aliases,
+                          cert=args.cert, key=args.key, acme=args.acme)
         install_tls_proxy(root, settings)
     with tempfile.NamedTemporaryFile(mode="w", dir=root, delete=False, encoding="utf-8") as temp:
         json.dump(settings, temp, indent=2)

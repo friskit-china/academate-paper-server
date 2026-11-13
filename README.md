@@ -94,29 +94,37 @@ curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
 
 ## HTTPS 与其他设备访问
 
-要从其他设备访问，可为 Web 和 API 选同一个局域网名称的两个端口。以下示例假定 `paper.home.arpa` 在客户端能解析为服务器的局域网 IP。也可以换成服务器的固定局域网 IP；连接时使用与配置完全一致的地址。
+Web 和原生 API 各有一个主地址，也可以各自接受多个地址。下面用 `paper.home.arpa` 的 `8543` 端口提供 Web、`9543` 端口提供 API，同时允许在服务器上使用 `127.0.0.1`。请把示例域名换成访问设备能解析的域名或服务器的局域网 IP，并选择空闲端口。手机或其他电脑应使用服务器的域名或局域网 IP。
 
-直装用户从实例目录运行以下命令。重新启动后，浏览器使用 `https://paper.home.arpa:8443`，原生客户端使用 `https://paper.home.arpa:9443`。已有 HTTP 直装实例也可以用此流程切换；只在本机使用时，直接运行 `./bin/configure-https` 即可配置默认 HTTPS。
+直装时可直接把以下地址参数传给安装向导。已有实例从安装目录运行以下命令。
 
 ```sh
 cd "$HOME/AcadeMatePaper"
 ./bin/amp stop
-./bin/configure-https --web-origin https://paper.home.arpa:8443 --api-origin https://paper.home.arpa:9443
+./bin/configure-https \
+  --web-origin https://paper.home.arpa:8543 --api-origin https://paper.home.arpa:9543 \
+  --web-aliases https://127.0.0.1:8543 --api-aliases https://127.0.0.1:9543
 ./bin/amp start
 ```
 
-Docker 用户使用同一镜像。以下命令将两个端口发布到宿主机网络接口。更改已有容器前，先按下一节备份，再停止并移除旧容器，重新挂载原来的卷。设置两个 HTTPS 地址也可将原先的 HTTP 卷迁移到 HTTPS。
+Docker 用户使用同一镜像。下面的 `-p` 在宿主机的全部 IPv4 接口发布这两个端口。若只希望从某个接口接入，把 `0.0.0.0` 换成该接口的 IP。更改已有容器时，按下一节备份后重新创建容器并挂回原卷。
 
 ```sh
 docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
-  -p 8443:8443 -p 9443:9443 \
-  -e WEB_PUBLIC_ORIGIN=https://paper.home.arpa:8443 \
-  -e SERVER_HTTPS_API_ORIGIN=https://paper.home.arpa:9443 \
+  -p 0.0.0.0:8543:8543 -p 0.0.0.0:9543:9543 \
+  -e WEB_PUBLIC_ORIGIN=https://paper.home.arpa:8543 \
+  -e SERVER_HTTPS_API_ORIGIN=https://paper.home.arpa:9543 \
+  -e SERVER_HTTPS_WEB_ALIASES=https://127.0.0.1:8543 \
+  -e SERVER_HTTPS_API_ALIASES=https://127.0.0.1:9543 \
   --mount type=volume,source=acade-paper-data,target=/data \
   academatepaper/server:local
 ```
 
-**使用已有证书**时，在安装向导或 `configure-https` 命令后同时加上 `--cert /absolute/path/fullchain.pem --key /absolute/path/privkey.pem`。Docker 则在 `docker run` 增加 `--mount type=bind,source=/absolute/path/tls,target=/tls,readonly`、`-e SERVER_HTTPS_CERT_FILE=/tls/fullchain.pem` 和 `-e SERVER_HTTPS_KEY_FILE=/tls/privkey.pem`。证书应覆盖两个入口的主机名或 IP，容器服务用户（UID 10001）需要读取私钥的权限。替换证书后请运行 `amp restart`。
+别名参数接受以逗号分隔的完整 HTTPS 地址。每项填写 `https://主机名或IP:端口`，使用 443 时可以省略端口。实例按配置的地址匹配请求，Web 和 API 的地址不能完全相同。若别名使用额外端口，Docker 也要为每个新增端口添加 `-p`。例如增加 Web 别名 `https://reader.home.arpa:10443` 时，要同时增加 `-p 10443:10443`。
+
+实例自动签发的证书支持多个域名和一个字面 IP 地址，该 IP 可以出现在多个端口。若需同时用两个不同的 IP 连接（例如 `127.0.0.1` 和 `192.168.1.10`），请按下段提供一张同时覆盖这两个 IP 及所用域名的证书。使用局域网域名搭配回环 IP 时可直接使用自动签发。
+
+**使用已有证书**时，在安装向导或 `configure-https` 命令后同时加上 `--cert /absolute/path/fullchain.pem --key /absolute/path/privkey.pem`。Docker 则在 `docker run` 增加 `--mount type=bind,source=/absolute/path/tls,target=/tls,readonly`、`-e SERVER_HTTPS_CERT_FILE=/tls/fullchain.pem` 和 `-e SERVER_HTTPS_KEY_FILE=/tls/privkey.pem`。证书的 SAN 应覆盖两个入口及全部别名使用的主机名和 IP，容器服务用户（UID 10001）需要读取私钥的权限。替换证书后请运行 `amp restart`。
 
 **使用公网 CA** 时，给 Web、API 设置不同的可解析公网域名，两者都用 HTTPS 默认端口。直装增加 `--acme`，Docker 增加 `-e SERVER_HTTPS_MODE=acme` 并发布 `-p 443:443`。此模式需要公网能访问 443，直装服务账号也需要监听该端口的权限。
 

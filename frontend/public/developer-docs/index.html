@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>AcadeMate Paper Server API Guide</title>
+  <link rel="stylesheet" href="viewer.css">
+  <script src="viewer.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <a href="/library">AcadeMate Paper</a>
+      <h1>Server API Guide</h1>
+      <p id="version"></p>
+    </header>
+    <nav aria-label="API 参考">
+      <button type="button" id="operations" aria-pressed="true" disabled>接口</button>
+      <button type="button" id="schemas" aria-pressed="false" disabled>数据结构</button>
+      <a href="/api/v2/openapi.json">OpenAPI JSON</a>
+    </nav>
+    <div class="filters">
+      <label>搜索<input id="search" type="search" placeholder="路径、名称或关键字" disabled></label>
+      <label id="method-filter">HTTP 方法<select id="method" disabled>
+        <option value="">全部</option>
+      </select></label>
+    </div>
+    <p id="status" role="status">正在读取此实例的 API 定义…</p>
+    <div id="results"></div>
+    <noscript>此查看器需要 JavaScript。也可以使用上方的 OpenAPI JSON 链接。</noscript>
+  </main>
+</body>
+</html>

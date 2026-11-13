@@ -1,0 +1,10 @@
+# AcadematePaper deterministic TeX runtime.
+#
+# This daily upstream snapshot matches arXiv's documented TeX Live package-tree
+# date. arXiv's unpublished local addons are not part of this runtime.
+TEXLIVE_RUNTIME_ID=arxiv-tl2025-2025-08-03
+TEXLIVE_RELEASE=2025
+TEXLIVE_REPOSITORY_URL=https://texlive.info/tlnet-archive/2025/08/03/tlnet
+TEXLIVE_INSTALLER_URL=https://texlive.info/tlnet-archive/2025/08/03/tlnet/install-tl-unx.tar.gz
+TEXLIVE_INSTALLER_SHA512=11163daa1195d02a8f2a68b968266474b71aa2014695137efb68165c16fb2afabaf306bf71f91ee8e6e08b740cf9b46a2180a5a1a2517abcd3f52f835da0682c
+TEXLIVE_TLPDB_SHA512=6b0275fea1a0cfee5916e9dfb60607b9b8894b20d2fea5e91981cf9fe05f5201e1238fe349918f991249d0875391569837e134df04fd11b8074d6d7ff3eb7a88

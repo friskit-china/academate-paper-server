@@ -1,0 +1,18 @@
+# Root-context Server builds must never send deployment secrets or private product data.
+*
+!Dockerfile.server
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+**/.env
+**/.env.*
+**/.git
+**/.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+backend/app/local_runtime
+backend/tests

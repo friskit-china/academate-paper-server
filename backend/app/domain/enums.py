@@ -1,0 +1,93 @@
+from enum import StrEnum
+
+
+class ProcessingStage(StrEnum):
+    REGISTERED = "REGISTERED"
+    SOURCE_READY = "SOURCE_READY"
+    READING_READY = "READING_READY"
+    SEMANTIC_READY = "SEMANTIC_READY"
+    KNOWLEDGE_READY = "KNOWLEDGE_READY"
+
+
+class ProcessingHealth(StrEnum):
+    OK = "OK"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+
+
+class ReadingStatus(StrEnum):
+    UNREAD = "UNREAD"
+    READING = "READING"
+    COMPLETED = "COMPLETED"
+    ARCHIVED = "ARCHIVED"
+
+
+class TaskStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class TranslationStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class AnnotationType(StrEnum):
+    ANNOTATION = "ANNOTATION"
+    HIGHLIGHT = "HIGHLIGHT"
+    USER_NOTE = "USER_NOTE"
+    AI_QUESTION = "AI_QUESTION"
+    AI_RESPONSE = "AI_RESPONSE"
+
+
+class AnnotationTarget(StrEnum):
+    SOURCE = "SOURCE"
+    TRANSLATION = "TRANSLATION"
+    BLOCK = "BLOCK"
+    PAPER = "PAPER"
+
+
+class AnnotationResolutionStatus(StrEnum):
+    RESOLVED_OFFSETS = "RESOLVED_OFFSETS"
+    RESOLVED_EXACT = "RESOLVED_EXACT"
+    RESOLVED_CONTEXT = "RESOLVED_CONTEXT"
+    UNRESOLVED = "UNRESOLVED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class QAStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class PaperMapStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    STALE = "STALE"
+
+
+class PaperMapQuestionStatus(StrEnum):
+    NOT_REQUESTED = "NOT_REQUESTED"
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class PaperMapAnswerStatus(StrEnum):
+    SUPPORTED = "SUPPORTED"
+    PARTIALLY_SUPPORTED = "PARTIALLY_SUPPORTED"
+    NOT_STATED = "NOT_STATED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    WEB_REQUIRED = "WEB_REQUIRED"
+    INFERENCE = "INFERENCE"

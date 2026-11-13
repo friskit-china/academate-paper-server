@@ -1,0 +1,90 @@
+# AcadeMate Paper Server: Python API + worker + verifier + bundled Next Web client.
+# Build from repository root. The backend lock/install inputs are identical to backend/Dockerfile.
+FROM python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2 AS backend-runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    ACADEMATE_TEXLIVE_PROFILE=arxiv-tl2025-2025-08-03 \
+    ACADEMATE_TEXLIVE_RELEASE=2025 \
+    PATH=/opt/texlive/bin:${PATH}
+
+WORKDIR /app
+
+COPY backend/system-requirements.debian.txt ./
+COPY backend/scripts/install-system-requirements.sh ./scripts/install-system-requirements.sh
+RUN sh scripts/install-system-requirements.sh
+
+COPY backend/texlive-runtime.lock backend/texlive.profile ./
+COPY backend/scripts/install-texlive.sh backend/scripts/prepare_texlive_repository.py ./scripts/
+RUN sh scripts/install-texlive.sh
+
+COPY backend/pyproject.toml backend/requirements.runtime.lock backend/alembic.ini ./
+RUN pip install --requirement requirements.runtime.lock \
+    && pip check
+
+COPY backend/alembic ./alembic
+COPY backend/app ./app
+
+# Compose/image builds use only this image's pinned PATH. Native Local artifacts override this
+# with managed-manifest plus an explicit packaged root and versioned manifest.
+ENV TOOLCHAIN_MODE=compose-path \
+    TOOLCHAIN_MANIFEST_PATH=/opt/texlive/runtime-profile
+
+# This is an actual LaTeX table compile with an embedded raster asset, not only a
+# binary-presence check. It exercises pdflatex + pdftocairo inside the image.
+# A missing TeX package therefore fails the image build instead of failing a user task later.
+RUN python -m app.runtime_check --profile worker
+
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /data/database /data/papers /data/exports /data/tmp \
+    && chown -R appuser:appuser /data
+
+USER appuser
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df AS web-builder
+WORKDIR /web
+RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN test "$(pnpm --version)" = "11.19.0" \
+    && pnpm test && pnpm typecheck && pnpm build \
+    && node scripts/smoke-next-standalone.mjs .next/standalone
+
+FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648 AS tls-proxy
+
+FROM backend-runtime AS server
+COPY --from=tls-proxy /usr/bin/caddy /usr/local/bin/caddy
+RUN /usr/local/bin/caddy version
+COPY --chmod=0755 backend/scripts/amp /usr/local/bin/amp
+COPY --from=web-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=web-builder --chown=appuser:appuser /web/.next/standalone /opt/academate-web
+COPY --from=web-builder --chown=appuser:appuser /web/.next/static /opt/academate-web/.next/static
+COPY --from=web-builder --chown=appuser:appuser /web/public /opt/academate-web/public
+ENV RUNTIME_EDITION=SERVER \
+    IDENTITY_MODE=AUTHENTICATED \
+    DATABASE_PROFILE=SQLITE_LOCAL \
+    STORAGE_PROFILE=LOCAL_FILES \
+    TASK_QUEUE_PROFILE=SQLITE_DB \
+    SECRET_STORE_PROFILE=ENV_OR_KMS \
+    OS_SECRET_STORE_MODE=unavailable \
+    RUNTIME_NETWORK_SCOPE=PRIVATE_COMPOSE \
+    DATABASE_URL=sqlite:////data/database/workspace.sqlite3 \
+    STORAGE_ROOT=/data \
+    SINGLE_USER_AUTO_LOGIN_ENABLED=false \
+    SERVER_WEB_ENABLED=true \
+    SERVER_API_BIND_HOST=0.0.0.0 \
+    WEB_PUBLIC_ORIGIN=http://127.0.0.1:3000 \
+    NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1
+COPY --from=web-builder /web/scripts/smoke-next-standalone.mjs /opt/academate-web/smoke-next-standalone.mjs
+RUN node --version && node /opt/academate-web/smoke-next-standalone.mjs /opt/academate-web
+HEALTHCHECK --interval=10s --timeout=5s --start-period=120s --retries=3 \
+    CMD ["python", "-m", "app.container_entry", "health"]
+EXPOSE 3000 8443 9443
+CMD ["python", "-m", "app.container_entry", "serve"]

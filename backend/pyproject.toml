@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "academatepaper-backend"
+version = "0.1.1"
+description = "AcadeMate Paper FastAPI application and worker"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic==1.19.1",
+  "cryptography==50.0.1",
+  "fastapi==0.141.1",
+  "pydantic-settings==2.15.0",
+  "sqlalchemy==2.0.52",
+  "uvicorn[standard]==0.52.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx2==2.10.0",
+  "pytest==8.4.2",
+  "pytest-asyncio==1.4.0",
+  "ruff==0.16.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

@@ -1,0 +1,9 @@
+aria2
+ca-certificates
+curl
+fontconfig
+ghostscript
+gnupg
+perl
+poppler-utils
+xz-utils

@@ -27,6 +27,19 @@
 
 ![以论文为起点的理解图，分支连接问题、方法与实验证据，下方可继续阅读正文](screenshots/paper-map.png)
 
+## 系统配置要求
+
+两种安装方式首次安装时都需要联网下载依赖。
+
+| 安装方式 | 系统与处理器 | 首次安装建议预留的可用空间 |
+| --- | --- | --- |
+| 直接安装 | macOS（Apple Silicon 或 Intel）或 Linux（ARM64 或 x86_64，glibc 2.28 及以上） | 安装目录所在磁盘 **20 GiB**，用于下载、解压和安装依赖 |
+| Docker 容器安装 | 能运行 Linux 容器的 Docker 环境，例如 Linux 上的 Docker Engine 或 macOS 上的 Docker Desktop。支持 `linux/arm64` 和 `linux/amd64` | Docker 数据盘 **30 GiB**，用于从源码构建镜像及保存构建缓存 |
+
+**CPU 与内存参考。** 直接安装已在 Apple Silicon Mac 和 Ubuntu ARM64 上完成验证。Ubuntu 测试机配置为 6 vCPU、8 GiB 内存，完成了论文导入、公式和图表渲染，可作为选择服务器规格的参考。
+
+**磁盘占用参考。** Apple Silicon 上的全新直装实例约占 9.1 GiB，含安装缓存。Docker 的 v0.1.5 ARM64 镜像约为 7.4 GiB，构建时还会占用临时空间。两种方式都需要为后续导入的论文、渲染后的图表和备份另留空间。
+
 ## 部署
 
 **两种安装方式任选其一。** 如果希望将服务直接装在 macOS 或 Linux 上，请选[安装方式 1](#安装方式-1macoslinux-直接安装)。如果使用 Docker，请选[安装方式 2](#安装方式-2docker-容器安装)。
@@ -65,7 +78,7 @@ amp status
   --web-port 8443 --api-port 9443
 ```
 
-直装提供 macOS 和 Linux 的 arm64 与 x86_64 依赖锁。Linux 需要 glibc 2.28 或更高版本。引导阶段使用 POSIX shell、curl、SHA-256 校验工具及支持 bzip2 的 tar，或系统已有的 Python 3。
+安装向导需要 POSIX shell、curl 和 SHA-256 校验工具。解压步骤可以使用支持 bzip2 的 tar 或系统已有的 Python 3。
 
 ### 安装方式 2：Docker 容器安装
 

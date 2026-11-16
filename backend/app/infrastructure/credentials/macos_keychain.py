@@ -22,6 +22,8 @@ from app.domain.credentials import (
 
 KEYCHAIN_SERVICE = "com.academatepaper.local.credentials.v1"
 KEYCHAIN_SMOKE_SERVICE = "com.academatepaper.local.credentials.smoke.v1"
+# This identifier is part of previously installed Keychain accounts.
+LEGACY_MASTER_KEY_NAME = "papermanager.llm-credentials.master"
 SECURITY_EXECUTABLE = "/usr/bin/security"
 _ITEM_NOT_FOUND_EXIT_CODE = 44
 _DUPLICATE_ITEM_EXIT_CODE = 45
@@ -113,6 +115,7 @@ class MacOSKeychainSecretStore:
         self._installation_id = installation_id
         self._runner = runner or SubprocessKeychainCommandRunner()
         self._service = service
+        self._account_aliases: dict[str, str] = {}
 
     def __repr__(self) -> str:
         return (
@@ -139,6 +142,14 @@ class MacOSKeychainSecretStore:
 
     def active_key_version(self, key_name: str) -> int | None:
         return self._load_metadata(key_name).active
+
+    def use_existing_master_key(self, key_name: str) -> None:
+        # Old credentials store only a key version. Keep their installation's entire
+        # key history together, including subsequent rotations, without copying keys.
+        if not self._load_metadata(key_name).versions and self._load_metadata(
+            LEGACY_MASTER_KEY_NAME
+        ).versions:
+            self._account_aliases[key_name] = LEGACY_MASTER_KEY_NAME
 
     def get(self, key_name: str, key_version: int) -> SecretKeyMaterial:
         self._validate_key_reference(key_name, key_version)
@@ -316,7 +327,7 @@ class MacOSKeychainSecretStore:
             "-a",
             account,
             "-D",
-            "AcadematePaper protected credential key",
+            "AcadeMate Paper protected credential key",
             "-w",
         ]
         if update:
@@ -356,10 +367,12 @@ class MacOSKeychainSecretStore:
             raise SecretStoreUnavailableError from error
 
     def _metadata_account(self, key_name: str) -> str:
-        return f"installation:{self._installation_id}:key:{key_name}:metadata"
+        name = self._account_aliases.get(key_name, key_name)
+        return f"installation:{self._installation_id}:key:{name}:metadata"
 
     def _version_account(self, key_name: str, key_version: int) -> str:
-        return f"installation:{self._installation_id}:key:{key_name}:version:{key_version}"
+        name = self._account_aliases.get(key_name, key_name)
+        return f"installation:{self._installation_id}:key:{name}:version:{key_version}"
 
     @staticmethod
     def _validate_key_name(key_name: str) -> None:
@@ -402,7 +415,7 @@ def run_macos_keychain_smoke(
 
     if platform_name != "darwin":
         raise RuntimeError("The real Keychain smoke is supported only on native macOS.")
-    smoke_key_name = "papermanager.native-keychain-smoke"
+    smoke_key_name = "academatepaper.native-keychain-smoke"
     material = SecretKeyMaterial(os.urandom(32))
     store = MacOSKeychainSecretStore(
         installation_id,

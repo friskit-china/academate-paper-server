@@ -58,7 +58,7 @@ test("runtime BFF preserves query, range status, headers, cookies, and streaming
         Range: "bytes=2-7",
         [INTERNAL_SERVICE_TOKEN_HEADER]: "browser-forged-token",
         "X-Drop-Request": "hop-by-hop",
-        "X-PaperManager-Internal-Service-Identity": "browser-forged-identity",
+        "X-AcadeMatePaper-Internal-Service-Identity": "browser-forged-identity",
         "X-User-Id": "browser-user",
         "X-Workspace-Id": "browser-workspace",
       },
@@ -95,7 +95,7 @@ test("runtime BFF preserves query, range status, headers, cookies, and streaming
   assert.equal(forwardedInit.headers.has("x-drop-request"), false);
   assert.equal(forwardedInit.headers.has("x-user-id"), false);
   assert.equal(forwardedInit.headers.has("x-workspace-id"), false);
-  assert.equal(forwardedInit.headers.has("x-papermanager-internal-service-identity"), false);
+  assert.equal(forwardedInit.headers.has("x-academatepaper-internal-service-identity"), false);
 
   assert.equal(response.status, 206);
   assert.equal(response.headers.get("content-type"), "application/pdf");

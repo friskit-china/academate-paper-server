@@ -280,8 +280,8 @@ class ClientApiMiddleware:
             return
         scope.pop("academatepaper.integration-binding.v2", None)
         scope.pop(CLIENT_BINDING_SCOPE_KEY, None)
-        scope.pop("papermanager.internal_service_identity", None)
-        scope.pop("papermanager.local_session_id", None)
+        scope.pop("academatepaper.internal_service_identity", None)
+        scope.pop("academatepaper.local_session_id", None)
         headers = scope.get("headers", [])
         values: dict[bytes, list[str]] = {}
         for name, value in headers:
@@ -361,7 +361,7 @@ class ClientApiMiddleware:
                     if not _integration_read_allowed(
                         scope["method"], scope["path"], integration.scopes
                     ):
-                        request_id = scope.get("papermanager.request_id", "")
+                        request_id = scope.get("academatepaper.request_id", "")
                         await JSONResponse(
                             {
                                 "code": "INTEGRATION_SCOPE_FORBIDDEN",
@@ -383,7 +383,7 @@ class ClientApiMiddleware:
             elif authorization is not None:
                 raise ClientAuthenticationError("UNEXPECTED_AUTHORIZATION")
         except (ClientAuthenticationError, ValueError, UnicodeError, TypeError):
-            request_id = scope.get("papermanager.request_id", "")
+            request_id = scope.get("academatepaper.request_id", "")
             await JSONResponse(
                 {
                     "code": "INVALID_CLIENT_AUTHENTICATION",

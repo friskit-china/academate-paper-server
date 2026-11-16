@@ -336,8 +336,8 @@ class V2ContractMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         scope = dict(scope)
-        request_id = scope.get("papermanager.request_id") or uuid4().hex
-        scope["papermanager.request_id"] = request_id
+        request_id = scope.get("academatepaper.request_id") or uuid4().hex
+        scope["academatepaper.request_id"] = request_id
 
         async def identified_send(message):
             if message["type"] == "http.response.start":

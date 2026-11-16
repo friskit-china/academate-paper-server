@@ -160,6 +160,7 @@ def build_credential_adapters(
             f"The macOS Keychain is unavailable ({availability.reason_code})."
         )
     try:
+        secret_store.use_existing_master_key(MASTER_KEY_NAME)
         active_version = secret_store.active_key_version(MASTER_KEY_NAME)
         if active_version is None:
             raw_key = key_material_factory(32)

@@ -24,8 +24,6 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 const UNTRUSTED_BROWSER_IDENTITY_HEADERS = new Set([
   INTERNAL_SERVICE_TOKEN_HEADER,
-  "x-papermanager-internal-service-identity",
-  "x-academate-internal-service-identity",
   "x-user-id",
   "x-workspace-id",
   "x-group-id",
@@ -277,6 +275,7 @@ export function requestHeadersForBackend(source: Headers, serviceToken: string):
       HOP_BY_HOP_HEADERS.has(normalized)
       || connectionHeaders.has(normalized)
       || UNTRUSTED_BROWSER_IDENTITY_HEADERS.has(normalized)
+      || normalized.endsWith("-internal-service-identity")
       || normalized === "host"
     ) {
       return;
@@ -342,6 +341,7 @@ export function responseHeadersForBrowser(
       || HOP_BY_HOP_HEADERS.has(normalized)
       || connectionHeaders.has(normalized)
       || UNTRUSTED_BROWSER_IDENTITY_HEADERS.has(normalized)
+      || normalized.endsWith("-internal-service-identity")
     ) {
       return;
     }

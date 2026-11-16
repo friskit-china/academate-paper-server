@@ -63,7 +63,7 @@ def _duration(value: str) -> timedelta:
 def _parser() -> argparse.ArgumentParser:
     parser = _OperatorArgumentParser(
         prog="python -m app.operator_cli",
-        description="AcadematePaper container-only deployment operator commands.",
+        description="AcadeMate Paper container-only deployment operator commands.",
     )
     resources = parser.add_subparsers(dest="resource", required=True)
     invitation = resources.add_parser("invite", help="管理当前安装 owner workspace 的邀请码")

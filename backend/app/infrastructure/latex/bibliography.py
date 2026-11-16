@@ -180,7 +180,7 @@ def _deduplicate_bibtex_sources_for_compilers(
 
     arXiv submissions sometimes concatenate several bibliography databases and leave
     repeated entries behind. BibTeX/Biber may tolerate exact duplicates or treat keys
-    that differ only by case as distinct, while AcadematePaper deliberately resolves
+    that differ only by case as distinct, while AcadeMate Paper deliberately resolves
     citation keys case-insensitively. Removing only the later entry declarations from
     the temporary compiler input keeps those semantics aligned without modifying the
     archived source, string declarations, preambles, comments, or citation text.

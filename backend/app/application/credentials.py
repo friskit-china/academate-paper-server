@@ -22,7 +22,7 @@ from app.domain.credentials import (
 from app.domain.ports import QueuedTask
 from app.domain.tasks import TaskScope, TaskVisibility
 
-MASTER_KEY_NAME = "papermanager.llm-credentials.master"
+MASTER_KEY_NAME = "academatepaper.llm-credentials.master"
 
 
 class CredentialApplicationError(RuntimeError):

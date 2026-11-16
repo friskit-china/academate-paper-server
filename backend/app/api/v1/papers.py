@@ -501,7 +501,7 @@ _TASK_DESCRIPTIONS = {
 _TASK_EXECUTION = {
     FETCH_METADATA: ("network", "arXiv metadata API"),
     FETCH_SOURCE: ("network", "arXiv source archive download"),
-    PARSE_SOURCE: ("local", "AcadematePaper structural LaTeX parser"),
+    PARSE_SOURCE: ("local", "AcadeMate Paper structural LaTeX parser"),
     RENDER_LATEX_FORMULA: ("local", "TeX Live + dvisvgm formula renderer"),
     RENDER_LATEX_BLOCK: ("local", "TeX Live native block renderer"),
     TRANSLATE_BLOCK: ("llm", "Configured block translator"),
@@ -2019,7 +2019,7 @@ def get_task_detail(paper_id: str, task_id: str, request: Request) -> TaskDetail
                 description=_TASK_DESCRIPTIONS[TRANSLATE_BLOCK],
                 execution_kind="llm",
                 uses_llm=True,
-                engine="AcadematePaper structured block translator",
+                engine="AcadeMate Paper structured block translator",
                 provider=translation.provider
                 if translation is not None
                 else payload.get("provider"),
@@ -2081,7 +2081,7 @@ def get_task_detail(paper_id: str, task_id: str, request: Request) -> TaskDetail
                 description=_TASK_DESCRIPTIONS[task.task_type],
                 execution_kind="llm",
                 uses_llm=True,
-                engine="AcadematePaper paper-map generator",
+                engine="AcadeMate Paper paper-map generator",
                 provider=(
                     question.provider
                     if question is not None and question.provider
@@ -2139,7 +2139,7 @@ def get_task_detail(paper_id: str, task_id: str, request: Request) -> TaskDetail
             )
 
         execution_kind, engine = _TASK_EXECUTION.get(
-            task.task_type, ("local", "AcadematePaper background worker")
+            task.task_type, ("local", "AcadeMate Paper background worker")
         )
         return TaskDetailResponse(
             id=task.id,

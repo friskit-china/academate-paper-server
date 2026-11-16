@@ -315,7 +315,7 @@ def _install_error_contract(app: FastAPI) -> None:
             {
                 "code": code,
                 "message": details.get("message", str(code)),
-                "request_id": request.scope.get("papermanager.request_id", ""),
+                "request_id": request.scope.get("academatepaper.request_id", ""),
                 "details": None,
             },
             status_code=error.status_code,
@@ -345,7 +345,7 @@ def _install_error_contract(app: FastAPI) -> None:
             {
                 "code": "INVALID_REQUEST",
                 "message": "Request validation failed.",
-                "request_id": request.scope.get("papermanager.request_id", ""),
+                "request_id": request.scope.get("academatepaper.request_id", ""),
                 "details": None if sensitive_form else [
                     {"location": list(e["loc"]), "type": e["type"]} for e in error.errors()
                 ],

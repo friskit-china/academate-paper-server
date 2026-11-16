@@ -18,7 +18,7 @@ class ApiAuditMiddleware:
             return await self.app(scope, receive, send)
         scope = dict(scope)
         scope.setdefault("state", {})
-        scope.setdefault("papermanager.request_id", uuid4().hex)
+        scope.setdefault("academatepaper.request_id", uuid4().hex)
 
         async def audited_send(message):
             if (
@@ -57,7 +57,7 @@ class ApiAuditMiddleware:
                                     :128
                                 ],
                                 resource_path=path,
-                                request_id=scope["papermanager.request_id"],
+                                request_id=scope["academatepaper.request_id"],
                                 targets={
                                     key: str(value)
                                     for key, value in scope.get("path_params", {}).items()

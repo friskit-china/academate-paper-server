@@ -42,7 +42,7 @@ class VersionedTransportMiddleware:
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
             scope = dict(scope)
-            scope["papermanager.request_id"] = uuid4().hex
+            scope["academatepaper.request_id"] = uuid4().hex
         path = scope.get("path", "")
         target = self.v2 if path == "/api/v2" or path.startswith("/api/v2/") else self.v1
 
@@ -88,7 +88,7 @@ class VersionedTransportMiddleware:
                     "COMMAND_TOO_LARGE",
                     "Command is too large.",
                     413,
-                    scope.get("papermanager.request_id", ""),
+                    scope.get("academatepaper.request_id", ""),
                 )(scope, receive, private_send)
         else:
             await target(scope, receive, send)

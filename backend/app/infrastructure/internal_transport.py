@@ -18,8 +18,8 @@ from app.application.web_sessions import (
 )
 
 INTERNAL_SERVICE_TOKEN_HEADER = "x-academate-internal-service-token"
-INTERNAL_SERVICE_IDENTITY_SCOPE_KEY = "papermanager.internal_service_identity"
-LOCAL_SESSION_ID_SCOPE_KEY = "papermanager.local_session_id"
+INTERNAL_SERVICE_IDENTITY_SCOPE_KEY = "academatepaper.internal_service_identity"
+LOCAL_SESSION_ID_SCOPE_KEY = "academatepaper.local_session_id"
 LOCAL_SESSION_COOKIE_NAME = "academate_local_session"
 WEB_SESSION_COOKIE_NAME = "academate_session"
 VERIFIED_BFF_IDENTITY = "supervisor-bff"
@@ -27,8 +27,6 @@ VERIFIED_BFF_IDENTITY = "supervisor-bff"
 _BROWSER_AUTHORITY_HEADERS = frozenset(
     {
         INTERNAL_SERVICE_TOKEN_HEADER.encode("ascii"),
-        b"x-papermanager-internal-service-identity",
-        b"x-academate-internal-service-identity",
         b"x-user-id",
         b"x-workspace-id",
         b"x-group-id",
@@ -205,6 +203,7 @@ class InternalServiceTokenMiddleware:
             (name, value)
             for name, value in scope.get("headers", [])
             if name.lower() not in _BROWSER_AUTHORITY_HEADERS
+            and not name.lower().endswith(b"-internal-service-identity")
         ]
 
     @staticmethod

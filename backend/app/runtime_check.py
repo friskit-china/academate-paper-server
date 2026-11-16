@@ -17,7 +17,7 @@ from app.infrastructure.runtime_dependencies import probe_worker_runtime
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Validate AcadematePaper runtime dependencies.")
+    parser = argparse.ArgumentParser(description="Validate AcadeMate Paper runtime dependencies.")
     parser.add_argument("--profile", choices=("worker",), default="worker")
     parser.add_argument(
         "--skip-render-smoke",

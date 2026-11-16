@@ -1,1 +1,1 @@
-"""AcadematePaper backend package."""
+"""AcadeMate Paper backend package."""

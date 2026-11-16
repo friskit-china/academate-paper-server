@@ -159,7 +159,7 @@ def main() -> int:
             )
             issued = service.issue_owner_token()
             fragment_token = quote(issued.raw_token, safe="")
-            print(f"AcadematePaper setup URL: {arguments.web_origin}/setup#token={fragment_token}")
+            print(f"AcadeMate Paper setup URL: {arguments.web_origin}/setup#token={fragment_token}")
             print(
                 "This URL is one-use and expires at "
                 f"{issued.expires_at.isoformat()}; it is intentionally visible only in "
@@ -220,7 +220,7 @@ def main() -> int:
             )
             return 1
         print(
-            "AcadematePaper setup is READY. "
+            "AcadeMate Paper setup is READY. "
             f"Verified {len(result.capability_states)} runtime capabilities."
         )
         return 0

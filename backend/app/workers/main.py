@@ -246,7 +246,7 @@ def _fail_task_authorization_denial(
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Run the AcadematePaper task worker.")
+    parser = argparse.ArgumentParser(description="Run the AcadeMate Paper task worker.")
     parser.add_argument(
         "--accept-external-toolchain-roots",
         action="store_true",

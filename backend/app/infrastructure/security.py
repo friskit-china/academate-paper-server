@@ -11,20 +11,19 @@ from app.domain.setup import IssuedBootstrapToken
 
 _BOOTSTRAP_DIGEST_DOMAIN = b"academatepaper.bootstrap-token.v1\0"
 _PASSWORD_SCHEME = "scrypt-v1"
+_OWNER_SETUP_TOKEN_TTL = timedelta(days=1)
 
 
 @dataclass(frozen=True, slots=True)
 class SecureBootstrapTokenIssuer:
-    # The Docker wizard deliberately spans several reviewable steps. Keep the proof bounded and
-    # one-use, but allow enough time for a human to choose a mode and enter administrator details.
-    ttl: timedelta = timedelta(minutes=15)
+    ttl: timedelta = _OWNER_SETUP_TOKEN_TTL
     entropy_bytes: int = 32
 
     def __post_init__(self) -> None:
         if self.entropy_bytes < 32:
             raise ValueError("Bootstrap tokens require at least 256 bits of entropy.")
-        if not timedelta(seconds=1) <= self.ttl <= timedelta(minutes=15):
-            raise ValueError("Bootstrap token TTL must be between one second and 15 minutes.")
+        if not timedelta(seconds=1) <= self.ttl <= _OWNER_SETUP_TOKEN_TTL:
+            raise ValueError("Bootstrap token TTL must be between one second and 24 hours.")
 
     def issue(self, *, now: datetime | None = None) -> IssuedBootstrapToken:
         issued_at = now or datetime.now(UTC)

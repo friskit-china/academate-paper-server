@@ -168,6 +168,13 @@ def main(selected, bin_dir, *, confirm_with_yes=False):
         stop_and_lock(root, stack)
         if validate_root(selected) != root or not os.path.samestat(identity, root.lstat()):
             raise ValueError("服务停止期间，所选目录发生变化，已取消删除。")
+        if (root / ".amp-shell-path.json").exists():
+            cleaner = subprocess.run(
+                [sys.executable, "-IB", str(Path(__file__).with_name("shell_path.py")), "remove", str(root)],
+                check=False,
+            )
+            if cleaner.returncode:
+                print("shell PATH 配置未完全清理，请检查安装时显示的启动文件。", file=sys.stderr)
         # Detach before deleting. The validated directory must still be the one that moved.
         staging = Path(tempfile.mkdtemp(prefix=".amp-remove-", dir=root.parent))
         tree = staging / "instance"
@@ -198,7 +205,10 @@ def main(selected, bin_dir, *, confirm_with_yes=False):
 if __name__ == "__main__":
     try:
         if sys.argv[1:2] == ["--amp"]:
-            parser = argparse.ArgumentParser(prog="amp uninstall", description="确认后永久删除本机直装实例。")
+            parser = argparse.ArgumentParser(
+                prog="amp uninstall",
+                description="永久卸载本机直装实例，包括代码、数据和 amp 命令。核对安装目录后输入 yes 确认，直接回车取消。",
+            )
             parser.parse_args(sys.argv[2:])
             root = Path(__file__).parent.parent
             if Path(__file__).resolve() != root / "releases/personal/uninstall.py":

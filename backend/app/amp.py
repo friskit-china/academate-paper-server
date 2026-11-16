@@ -170,15 +170,42 @@ def operate(command: str) -> dict:
         engine.dispose()
 
 
+DOCKER_UNINSTALL_GUIDE = """在 Docker 宿主机的源码目录运行：
+  ./amp uninstall [容器名]
+默认容器名为 acade-paper。
+核对容器、数据卷和镜像后，输入 yes 永久删除实例，直接回车取消。
+
+单文件 Dockerfile 部署可在宿主机取出卸载工具：
+  (
+    d=$(mktemp -d) || exit 1
+    trap 'rm -f "$d/amp"; rmdir "$d"' EXIT
+    docker cp acade-paper:/usr/local/share/academate-paper/amp "$d/amp" &&
+      sh "$d/amp" uninstall
+  )
+自定义容器名时，替换 docker cp 中的 acade-paper，并在 uninstall 后加上容器名。"""
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="amp", description=__doc__,
-        epilog="amp uninstall：卸载直装实例。Docker 实例请在宿主机的源码目录运行 ./amp uninstall。",
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["help"]:
+        arguments = [*arguments[1:], "--help"]
+    parser = argparse.ArgumentParser(prog="amp", description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    for name, summary in (
+        ("start", "启动服务"), ("stop", "停止服务"), ("restart", "重启服务"),
+        ("status", "查看服务与 worker 状态"), ("resume", "将中断的未完成任务重新入队"),
+        ("passwd", "修改登录密码"),
+    ):
+        commands.add_parser(name, help=summary, description=summary)
+    uninstall = commands.add_parser(
+        "uninstall", help="确认后永久卸载实例及其数据",
+        description=DOCKER_UNINSTALL_GUIDE, formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument(
-        "command", choices=["start", "stop", "restart", "status", "resume", "passwd"],
-    )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
+    if args.command == "uninstall":
+        # The native launcher handles uninstall; containers can only show host instructions.
+        uninstall.print_help(file=sys.stderr)
+        return 2
     try:
         report = operate(args.command)
         print(json.dumps(report, indent=2, ensure_ascii=False))

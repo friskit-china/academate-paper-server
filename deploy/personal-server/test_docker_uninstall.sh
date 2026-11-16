@@ -2,6 +2,12 @@
 # Integration with a local Docker daemon; only create/remove uniquely named test resources.
 set -eu
 script=$(cd "$(dirname "$0")/../.." && pwd)/amp
+# Help is available even when the host has no Docker CLI or running installation.
+for flag in -h --help; do
+    PATH=/nonexistent "$script" "$flag" | grep -F './amp uninstall' >/dev/null
+    PATH=/nonexistent "$script" uninstall "$flag" | grep -F yes >/dev/null
+done
+PATH=/nonexistent "$script" help uninstall | grep -F yes >/dev/null
 tmp=$(mktemp -d)
 name="amp-uninstall-qa-$(basename "$tmp" | tr '[:upper:]' '[:lower:]')"
 ref="$name:qa"

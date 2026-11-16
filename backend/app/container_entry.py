@@ -158,6 +158,13 @@ def main() -> int:
         print("Expected serve, health, setup or amp", file=sys.stderr)
         return 2
     action = sys.argv[1]
+    args = sys.argv[2:]
+    if action == "amp" and args and (
+        args[0] in {"help", "uninstall"} or {"-h", "--help"}.intersection(args)
+    ):
+        from app.amp import main as amp_main
+
+        return amp_main(args)
     try:
         apply_container_network(os.environ, initialize=action == "serve")
         apply_server_defaults(os.environ)

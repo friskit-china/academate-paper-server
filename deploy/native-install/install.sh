@@ -4,11 +4,12 @@ set -eu
 umask 077
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 usage() {
-    echo 'Usage: install.sh [--prefix DIRECTORY] [--bin-dir DIRECTORY] [--web-port N] [--api-port N] [--restore-from DIRECTORY] [--no-start]'
+    echo 'Usage: install.sh [--prefix DIRECTORY] [--bin-dir DIRECTORY] [--web-port N] [--api-port N] [--restore-from DIRECTORY] [--no-start] [--no-path-update]'
     echo '       HTTPS options: [--web-origin URL --api-origin URL] [--cert PEM --key PEM | --acme]'
     echo '       Separate Web/API HTTPS ports accept all hosts on all interfaces by default. Use --no-any-host for named hosts only.'
     echo '       Additional HTTPS origins: [--web-aliases URL,...] [--api-aliases URL,...]'
     echo '       Local HTTP: --http-loopback (fresh installations use HTTPS by default)'
+    echo '       install.sh --repair-path [--prefix DIRECTORY] [--bin-dir DIRECTORY]'
     echo '       install.sh --uninstall [--prefix DIRECTORY] [--bin-dir DIRECTORY]'
 }
 prefix=
@@ -27,10 +28,14 @@ http=no
 start=yes
 restore=
 uninstall=no
+repair_path=no
+update_path=yes
 interactive=no
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --help|-h) usage; exit 0 ;;
+        --repair-path) repair_path=yes; shift; continue ;;
+        --no-path-update) update_path=no; shift; continue ;;
         --uninstall) uninstall=yes; shift; continue ;;
         --no-start) start=no; shift; continue ;;
         --any-host|--no-any-host)
@@ -58,12 +63,17 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 default_root="$HOME/AcadeMatePaper"
+if [ "$repair_path" = yes ]; then
+    [ "$uninstall" = no ] && [ "$update_path" = yes ] || { usage >&2; exit 2; }
+    prefix=${prefix:-"$default_root"}
+fi
 if [ -z "$prefix" ]; then
     interactive=yes
     printf 'AcadeMate Paper 安装目录 [%s]: ' "$default_root"
     IFS= read -r prefix || :
     prefix=${prefix:-$default_root}
 fi
+explicit_bin_dir=$bin_dir
 bin_dir=${bin_dir:-"$HOME/.local/bin"}
 case "$prefix" in /*) ;; *) echo "安装目录必须是绝对路径。" >&2; exit 2 ;; esac
 case "$bin_dir" in /*) ;; *) echo "amp 入口目录必须是绝对路径。" >&2; exit 2 ;; esac
@@ -80,7 +90,7 @@ if [ "$interactive" = yes ] && [ "$uninstall" = no ] && [ -f "$prefix/.academate
         *) echo '选项无效。' >&2; exit 2 ;;
     esac
 fi
-if [ "$uninstall" = yes ]; then
+if [ "$uninstall" = yes ] || [ "$repair_path" = yes ]; then
     [ -z "$restore" ] || { echo '不能同时恢复和卸载。' >&2; exit 2; }
     marker="$prefix/.academate-personal-server"
     case "$prefix/" in */../*|*/./*) echo '请选择实例的实际绝对目录。' >&2; exit 2 ;; esac
@@ -90,6 +100,12 @@ if [ "$uninstall" = yes ]; then
         python="$prefix/releases/personal/runtime/bin/python"
         [ -O "$prefix" ] && [ -O "$marker" ] && [ -x "$python" ] ||
             { echo '未找到可用的实例 Python 或 python3。' >&2; exit 1; }
+    fi
+    if [ "$repair_path" = yes ]; then
+        mkdir "$prefix/.install-lock" || { echo '安装或卸载正在进行，请稍后重试。' >&2; exit 1; }
+        trap 'rmdir "$prefix/.install-lock"' EXIT
+        "$python" -IB "$here/shell_path.py" configure "$prefix" "$explicit_bin_dir"
+        exit
     fi
     exec "$python" -IB "$here/uninstall.py" "$prefix" "$bin_dir"
 fi
@@ -219,3 +235,9 @@ if [ "$http" = yes ]; then set -- "$@" --http-loopback; fi
 env -i "HOME=$prefix/home" "PATH=$release/runtime/bin:/usr/bin:/bin" \
     "PYTHONNOUSERSITE=1" "PYTHONDONTWRITEBYTECODE=1" \
     "$release/runtime/bin/python" "$here/install.py" "$@"
+# Shell startup belongs to the invoking user, outside the private runtime's HOME.
+set -- configure "$prefix" "$bin_dir"
+if [ "$update_path" = no ]; then set -- "$@" --no-path-update; fi
+"$release/runtime/bin/python" -IB "$here/shell_path.py" "$@" || {
+    printf '服务已安装。请直接使用 %s，或用 --repair-path 重新配置。\n' "$bin_dir/amp" >&2
+}

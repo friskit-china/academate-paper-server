@@ -1,15 +1,3 @@
 #!/bin/sh
-case "${1:-}" in
-    uninstall)
-        if [ "$#" -ne 1 ]; then echo '用法：amp uninstall' >&2; exit 2; fi
-        cat >&2 <<'GUIDE'
-请回到 Docker 宿主机，在 AcadeMate Paper Server 源码目录运行：
-  ./amp uninstall
-如果只有 Dockerfile，可从容器中临时复制卸载工具再执行：
-  (d=$(mktemp -d) && trap 'rm -f "$d/amp"; rmdir "$d"' EXIT && docker cp acade-paper:/usr/local/share/academate-paper/amp "$d/amp" && sh "$d/amp" uninstall)
-自定义容器名时，替换 docker cp 中的 acade-paper，并在 uninstall 后加上容器名。
-GUIDE
-        exit 2 ;;
-esac
 cd /app || exit 1
 exec /usr/local/bin/python -m app.container_entry amp "$@"

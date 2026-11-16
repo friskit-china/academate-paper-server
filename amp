@@ -3,15 +3,24 @@
 set -eu
 
 usage() {
-    echo '用法：./amp uninstall [容器名]    永久删除 Docker 实例、数据卷和专属镜像。默认容器名为 acade-paper。'
+    echo '用法：./amp uninstall [容器名]'
+    echo '在 Docker 宿主机上永久删除容器、数据卷和专属镜像。默认容器名为 acade-paper。'
+    echo '核对目标后输入 yes 确认，直接回车取消。'
 }
 fail() { echo "amp: $*" >&2; exit 1; }
 case "${1:-}" in
     --help|-h) usage; exit 0 ;;
-    uninstall) [ "$#" -le 2 ] || { usage >&2; exit 2; } ;;
+    help)
+        case "${2:-}" in ''|uninstall) usage; exit 0 ;; *) usage >&2; exit 2 ;; esac ;;
+    uninstall)
+        shift
+        for arg do
+            case "$arg" in --help|-h) usage; exit 0 ;; esac
+        done
+        [ "$#" -le 1 ] || { usage >&2; exit 2; } ;;
     *) usage >&2; exit 2 ;;
 esac
-name=${2-acade-paper}
+name=${1-acade-paper}
 case "$name" in ''|[!a-zA-Z0-9]*|*[!a-zA-Z0-9_.-]*) fail '请输入 Docker 容器名。';; esac
 # Keep the originally selected daemon even if another terminal changes the default context.
 if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then

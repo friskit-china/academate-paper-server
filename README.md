@@ -61,13 +61,14 @@ cd academate-paper-server
 ./deploy/native-install/install.sh
 ```
 
-安装完成后，打开向导打印的一次性 HTTPS 链接，为个人账号 `admin` 设置至少 12 个字符的密码。以后登录只需密码。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。如果浏览器提示证书不受信任，请参阅[可选步骤：信任证书](#可选步骤信任证书)。
+安装完成后，在 24 小时内打开向导打印的一次性 HTTPS 链接，为个人账号 `admin` 设置至少 12 个字符的密码。以后登录只需密码。如需新的设置链接，请运行 `"$HOME/AcadeMatePaper/bin/setup-url"`。如果浏览器提示证书不受信任，请参阅[可选步骤：信任证书](#可选步骤信任证书)。
 
-向导默认将 `amp` 链接放在 `~/.local/bin`。若终端找不到该命令，可将这个目录加入当前 shell 的 PATH。
+向导默认把 `amp` 放在 `~/.local/bin`，并为当前用户配置命令搜索路径（PATH）。安装后新开终端，运行 `amp status`。在已经打开的 zsh 或 bash 终端中，可以先执行 `export PATH="$HOME/.local/bin:$PATH"` 立即使用。如果自选了 `--bin-dir`，请使用所选目录。自行管理 shell 配置时，可在安装时加 `--no-path-update`。
+
+已直装的用户也可以从 v0.1.9 起的源码目录修复 PATH。把下面的路径换成实际安装目录，执行后新开终端即可。
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
-amp status
+./deploy/native-install/install.sh --repair-path --prefix "$HOME/AcadeMatePaper"
 ```
 
 以下示例显式选择安装目录、命令目录和端口。
@@ -100,7 +101,7 @@ docker run -d --name acade-paper --restart unless-stopped --stop-timeout 45 \
   academatepaper/server:local
 ```
 
-用 `docker inspect -f '{{.State.Health.Status}}' acade-paper` 查看启动状态。出现 `healthy` 后，运行以下命令，打开终端输出的一次性 HTTPS 链接设置密码。如果浏览器提示证书不受信任，请参阅[可选步骤：信任证书](#可选步骤信任证书)。
+用 `docker inspect -f '{{.State.Health.Status}}' acade-paper` 查看启动状态。出现 `healthy` 后，运行以下命令，在 24 小时内打开终端输出的一次性 HTTPS 链接设置密码。若链接已过期，可在首次设置完成前重新运行同一命令，新链接会替换旧链接。如果浏览器提示证书不受信任，请参阅[可选步骤：信任证书](#可选步骤信任证书)。
 
 ```sh
 docker exec -it acade-paper python -m app.container_entry setup prepare-container-setup
@@ -139,6 +140,8 @@ curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
 ```
 
 ## 服务 CLI
+
+运行 `amp --help` 查看命令列表，运行 `amp uninstall --help` 查看卸载范围及确认方式。Docker 宿主机在仓库目录运行 `./amp uninstall --help`。
 
 | 命令 | 用途 |
 | --- | --- |
@@ -215,7 +218,7 @@ cp -Rp "$HOME/AcadeMatePaper/data" "$HOME/AcadeMatePaper/instance.json" "$backup
 amp uninstall
 ```
 
-旧版或尚未完成安装的实例仍可从源码目录运行卸载向导，按提示输入完整安装路径。
+旧版或尚未完成安装的实例仍可从源码目录运行卸载向导，按提示输入完整安装路径。如果用新版向导给旧实例修复过 PATH，也请从新版源码运行以下命令，以便一并清理向导写入的 shell 配置。
 
 ```sh
 ./deploy/native-install/install.sh --uninstall --prefix "$HOME/AcadeMatePaper"

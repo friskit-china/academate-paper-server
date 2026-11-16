@@ -109,20 +109,31 @@ class UninstallTests(unittest.TestCase):
         )
         amp = publish_commands(self.root, release, self.bin_dir)
 
-        def invoke(entry, args, answer):
+        def invoke(entry, args, answer, command="uninstall"):
             return subprocess.run(
-                [entry, "uninstall", *args], input=answer, text=True, capture_output=True,
+                [entry, command, *args], input=answer, text=True, capture_output=True,
                 cwd=self.sandbox, env={"HOME": str(self.home), "PATH": os.defpath}, timeout=15,
             )
 
         for args, answer in (([], ""), ([], "\n"), ([], "YES\n"), ([], "no\n"),
-                             ([], f"{self.root}\n"), (["--yes"], "yes\n"), (["--help"], "")):
+                             ([], f"{self.root}\n"), (["--yes"], "yes\n")):
             with self.subTest(args=args, answer=answer):
                 result = invoke(amp, args, answer)
                 if not args:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertIn("yes", result.stdout)
                     self.assertIn(str(self.root), result.stdout)
+                self.assertFalse(self.stop_log.exists())
+                self.assertTrue(self.link.is_symlink())
+                self.assertTrue(self.cached.exists())
+
+        for command, args in (("uninstall", ["--help"]), ("uninstall", ["-h"]), ("help", ["uninstall"])):
+            with self.subTest(command=command, args=args):
+                result = invoke(self.link, args, "yes\n", command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("yes", result.stdout)
+                self.assertIn("amp uninstall", result.stdout)
+                self.assertNotIn(str(self.root), result.stdout)
                 self.assertFalse(self.stop_log.exists())
                 self.assertTrue(self.link.is_symlink())
                 self.assertTrue(self.cached.exists())

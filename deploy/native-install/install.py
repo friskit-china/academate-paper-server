@@ -342,7 +342,7 @@ def prepare_setup(env, backend):
 
 
 def publish_commands(root, release, bin_dir):
-    for script in ("configure_https.py", "launcher.py", "uninstall.py"):
+    for script in ("configure_https.py", "launcher.py", "uninstall.py", "shell_path.py"):
         shutil.copy2(Path(__file__).with_name(script), release / script)
     (root / "bin").mkdir(exist_ok=True)
     bin_dir.mkdir(parents=True, exist_ok=True)

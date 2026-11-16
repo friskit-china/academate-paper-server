@@ -148,6 +148,7 @@ curl --cacert ./academate-paper-ca.crt https://127.0.0.1:9443/api/v2/server/info
 | `amp status` | 查看服务和子进程状态、worker 最近心跳及处理容量 |
 | `amp resume` | 将执行中断且已失去有效 worker 的任务重新加入队列，可重复执行 |
 | `amp passwd` | 在终端修改个人账号密码 |
+| `amp uninstall` | 永久卸载当前实例。直装在宿主机运行 `amp uninstall`，Docker 安装在宿主机的仓库目录运行 `./amp uninstall`。输入 `yes` 才执行 |
 
 ## HTTPS 与其他设备访问
 
@@ -206,7 +207,15 @@ cp -Rp "$HOME/AcadeMatePaper/data" "$HOME/AcadeMatePaper/instance.json" "$backup
   --restore-from "$backup_dir"
 ```
 
-确认新实例的文库、批注和阅读进度后，用新目录下的 `bin/amp` 管理服务。只做备份时，复制完成后启动原实例即可。要永久卸载某一实例，运行下面的命令，核对范围后输入向导显示的完整目录。确认后，该目录内的代码、数据和密钥将被永久删除。
+确认新实例的文库、批注和阅读进度后，用新目录下的 `bin/amp` 管理服务。只做备份时，复制完成后启动原实例即可。
+
+**卸载直装实例（v0.1.7 起）。** 在宿主机运行下列命令。若有多个实例，请使用目标安装目录下的 `bin/amp uninstall`。核对提示中的安装路径后，输入小写 `yes` 并回车。服务会停止，整个安装目录（含代码、依赖、论文、账号、密钥和缓存）及指向它的 `amp` 命令链接都会删除。直接回车可取消。
+
+```sh
+amp uninstall
+```
+
+旧版或尚未完成安装的实例仍可从源码目录运行卸载向导，按提示输入完整安装路径。
 
 ```sh
 ./deploy/native-install/install.sh --uninstall --prefix "$HOME/AcadeMatePaper"
@@ -222,7 +231,15 @@ docker run --rm --network none --entrypoint tar \
   academatepaper/server:local -C /data -czf - . > "$backup_dir/data.tar.gz"
 ```
 
-只做备份时执行 `docker start acade-paper`。升级时，从新版源码重新构建镜像，用 `docker rm acade-paper` 移除已停止的容器，然后按原有端口、证书和数据卷参数重新创建。同一份数据在任一时刻只应由一个 Server 写入。要永久卸载，请在确认备份可用后停止并移除容器，再执行 `docker volume rm acade-paper-data` 删除全部实例数据；本机镜像可用 `docker image rm academatepaper/server:local` 移除。
+只做备份时执行 `docker start acade-paper`。升级时，从新版源码重新构建镜像，用 `docker rm acade-paper` 移除已停止的容器，然后按原有端口、证书和数据卷参数重新创建。同一份数据在任一时刻只应由一个 Server 写入。
+
+**卸载 Docker 实例。** 在宿主机进入本仓库目录，运行下面的命令。默认目标是 `acade-paper`。自定义容器名时，在命令末尾加上容器名。核对列出的容器、数据卷和镜像后，输入小写 `yes` 并回车。卸载会删除容器（包括其中的代码和 `amp`）、专属数据卷及该实例独占的应用镜像。用于构建的源码仓库可继续用于重新部署。
+
+```sh
+./amp uninstall
+```
+
+此命令适用于上面两种 Docker 部署示例使用的本地数据卷。若卷还被其他容器挂载，卸载会在停服前提示卷名并退出。自定义绑定挂载的宿主机数据目录需自行清理。
 
 ## API
 

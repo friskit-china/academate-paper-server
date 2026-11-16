@@ -171,7 +171,10 @@ def operate(command: str) -> dict:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="amp", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="amp", description=__doc__,
+        epilog="amp uninstall：卸载直装实例。Docker 实例请在宿主机的源码目录运行 ./amp uninstall。",
+    )
     parser.add_argument(
         "command", choices=["start", "stop", "restart", "status", "resume", "passwd"],
     )

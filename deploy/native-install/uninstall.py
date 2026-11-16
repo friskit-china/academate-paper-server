@@ -1,5 +1,6 @@
 """Remove a confirmed, locally installed AcadeMate Paper instance."""
 
+import argparse
 import fcntl
 import json
 import os
@@ -18,9 +19,13 @@ def validate_root(selected):
     if not selected.is_absolute() or ".." in selected.parts or selected.is_symlink():
         raise ValueError("请选择实例的实际绝对目录。")
     root = selected.resolve(strict=True)
-    for protected in (Path.home().resolve(), Path(__file__).resolve().parents[2]):
-        if root == protected or root in protected.parents:
-            raise ValueError("不能删除主目录、安装向导所在目录或其上级目录。")
+    home = Path.home().resolve()
+    script = Path(__file__).resolve()
+    # Only the installed copy may remove the directory containing itself.
+    if root == home or root in home.parents or (
+        root in script.parents and script != root / "releases/personal/uninstall.py"
+    ):
+        raise ValueError("不能删除主目录、安装向导所在目录或其上级目录。")
     if root.stat().st_uid != os.getuid() or not root.is_dir():
         raise ValueError("请选择当前用户拥有的安装目录。")
     marker = root / MARKER
@@ -136,7 +141,7 @@ def guard_installation(root, identity):
         os.close(fd)
 
 
-def main(selected, bin_dir):
+def main(selected, bin_dir, *, confirm_with_yes=False):
     root = validate_root(selected)
     identity = root.stat()
     links = external_links(root, bin_dir)
@@ -144,11 +149,15 @@ def main(selected, bin_dir):
     print("包括程序、私有依赖、数据库、论文、批注、设置、密钥和缓存。")
     for link in links:
         print(f"同时移除此命令链接：{link}")
+    if confirm_with_yes:
+        prompt, expected = "确认卸载请输入 yes，其他输入取消：", "yes"
+    else:
+        prompt, expected = "确认删除请输入上面的完整安装目录，直接回车取消：", str(root)
     try:
-        answer = input("确认删除请输入上面的完整安装目录，直接回车取消：")
+        answer = input(prompt)
     except EOFError:
         answer = ""
-    if answer != str(root):
+    if answer != expected:
         print("已取消。")
         return
     if validate_root(selected) != root or not os.path.samestat(identity, root.stat()):
@@ -188,6 +197,14 @@ def main(selected, bin_dir):
 
 if __name__ == "__main__":
     try:
-        main(Path(sys.argv[1]), Path(sys.argv[2]))
+        if sys.argv[1:2] == ["--amp"]:
+            parser = argparse.ArgumentParser(prog="amp uninstall", description="确认后永久删除本机直装实例。")
+            parser.parse_args(sys.argv[2:])
+            root = Path(__file__).parent.parent
+            if Path(__file__).resolve() != root / "releases/personal/uninstall.py":
+                raise ValueError("当前卸载程序不属于所选的实例。")
+            main(root, root / "bin", confirm_with_yes=True)
+        else:
+            main(Path(sys.argv[1]), Path(sys.argv[2]))
     except (OSError, ValueError, RuntimeError) as error:
         sys.exit(f"卸载失败：{error}")

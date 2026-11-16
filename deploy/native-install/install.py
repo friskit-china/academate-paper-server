@@ -341,6 +341,27 @@ def prepare_setup(env, backend):
     )
 
 
+def publish_commands(root, release, bin_dir):
+    for script in ("configure_https.py", "launcher.py", "uninstall.py"):
+        shutil.copy2(Path(__file__).with_name(script), release / script)
+    (root / "bin").mkdir(exist_ok=True)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    prefix = shlex.quote(str(root / "current"))
+    for name in ("amp", "setup-url", "configure-https"):
+        script = (
+            f"#!/bin/sh\nexec {prefix}/runtime/bin/python -I "
+            f'{prefix}/launcher.py {name} "$@"\n'
+        )
+        private_file(root / "bin" / name, script, mode=0o700)
+    (root / "current").symlink_to(release.relative_to(root), target_is_directory=True)
+    amp = root / "bin" / "amp"
+    if bin_dir.resolve() != amp.parent:
+        link = bin_dir.resolve() / "amp"
+        private_file(root / ".amp-link", str(link) + "\n")
+        link.symlink_to(amp)
+    return amp
+
+
 def install(root, bin_dir, web_port, api_port, start, source=None, **transport):
     release = Path(sys.executable).resolve().parents[2]
     cache = root / "cache"
@@ -400,25 +421,8 @@ def install(root, bin_dir, web_port, api_port, start, source=None, **transport):
         cwd=backend,
         env=env,
     )
-    shutil.copy2(Path(__file__).with_name("configure_https.py"), release / "configure_https.py")
-    launcher = release / "launcher.py"
-    shutil.copy2(Path(__file__).with_name("launcher.py"), launcher)
     # Publish only after both the compiled Web and real TeX/Poppler smoke pass.
-    (root / "bin").mkdir(exist_ok=True)
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    prefix = shlex.quote(str(root / "current"))
-    for name in ("amp", "setup-url", "configure-https"):
-        script = (
-            f"#!/bin/sh\nexec {prefix}/runtime/bin/python -I "
-            f'{prefix}/launcher.py {name} "$@"\n'
-        )
-        private_file(root / "bin" / name, script, mode=0o700)
-    (root / "current").symlink_to(release.relative_to(root), target_is_directory=True)
-    amp = root / "bin" / "amp"
-    if bin_dir.resolve() != amp.parent:
-        link = bin_dir.resolve() / "amp"
-        private_file(root / ".amp-link", str(link) + "\n")
-        link.symlink_to(amp)
+    amp = publish_commands(root, release, bin_dir)
     print(f"AcadeMate Paper 已安装。CLI: {bin_dir / 'amp'}", flush=True)
     print(
         f"如需重新生成首次设置链接，可运行 {shlex.quote(str(root / 'bin' / 'setup-url'))}。"

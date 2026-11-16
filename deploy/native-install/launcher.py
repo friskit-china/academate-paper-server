@@ -5,6 +5,12 @@ import os
 import sys
 from pathlib import Path
 
+if sys.argv[1:3] == ["amp", "uninstall"]:
+    # The installed wrapper calls <prefix>/current/launcher.py. Keep the original
+    # path to identify this prefix, and the host HOME/PATH to find its amp links.
+    script = Path(__file__).with_name("uninstall.py")
+    os.execv(sys.executable, [sys.executable, "-IB", str(script), "--amp", *sys.argv[3:]])
+
 release = Path(__file__).resolve().parent
 root = release.parent.parent
 environment = {

@@ -1,0 +1,141 @@
+#!/bin/sh
+# Host-side Docker CLI for the personal Server. Installed native instances have their own amp.
+set -eu
+
+usage() {
+    echo '用法：./amp uninstall [容器名]    永久删除 Docker 实例、数据卷和专属镜像。默认容器名为 acade-paper。'
+}
+fail() { echo "amp: $*" >&2; exit 1; }
+case "${1:-}" in
+    --help|-h) usage; exit 0 ;;
+    uninstall) [ "$#" -le 2 ] || { usage >&2; exit 2; } ;;
+    *) usage >&2; exit 2 ;;
+esac
+name=${2-acade-paper}
+case "$name" in ''|[!a-zA-Z0-9]*|*[!a-zA-Z0-9_.-]*) fail '请输入 Docker 容器名。';; esac
+# Keep the originally selected daemon even if another terminal changes the default context.
+if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
+    DOCKER_CONTEXT=$(docker context show)
+    export DOCKER_CONTEXT
+fi
+
+# A metadata-only volume makes a failed teardown retryable even after the container is gone.
+# Store no host files and never execute anything from Docker labels.
+journal="academate-paper-uninstall-$name"
+label='org.academatepaper.uninstall.v1'
+volume_exists() {
+    listed=$(docker volume ls --format '{{.Name}}') || exit 1
+    printf '%s\n' "$listed" | grep -Fxq -- "$1"
+}
+read_journal() {
+    docker volume inspect --format "{{index .Labels \"$label\"}}" "$journal"
+}
+volume_stamp() {
+    docker volume inspect --format '{{.Driver}}:{{.Scope}}:{{len .Options}}:{{.CreatedAt}}' "$1"
+}
+volume_users() {
+    docker ps -a --no-trunc --filter "volume=$1" --format '{{.ID}}'
+}
+prepare() {
+    cid=$(docker container inspect --format '{{.Id}}' "$name") || fail "找不到容器 ${name}。"
+    [ "$(docker container inspect --format '{{.Name}}' "$cid")" = "/$name" ] || fail '请指定容器的完整名称。'
+    image=$(docker container inspect --format '{{.Image}}' "$cid")
+    ref=$(docker container inspect --format '{{.Config.Image}}' "$cid")
+    identity=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.title"}}|{{json .Config.Cmd}}|{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{end}}' "$image")
+    case "$identity" in
+        'AcadeMate Paper Server|'*|*'|["python","-m","app.container_entry","serve"]|["CMD","python","-m","app.container_entry","health"]') ;;
+        *) fail '容器镜像不属于 AcadeMate Paper Server。' ;;
+    esac
+    volume=$(docker container inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{if and .RW (eq .Type "volume")}}{{.Name}}{{end}}{{else if .RW}}!{{end}}{{end}}' "$cid")
+    case "$volume" in ''|*[!a-zA-Z0-9_.-]*|"$journal") fail '需要 /data 独占一个 Docker 卷。请单独处理绑定的宿主目录或其他可写挂载。';; esac
+    stamp=$(volume_stamp "$volume")
+    case "$stamp" in local:local:0:?*) ;; *) fail '数据卷使用外部存储，需由其所有者清理。';; esac
+    [ "$(volume_users "$volume")" = "$cid" ] || fail "数据卷 $volume 还属于其他容器。"
+
+    # Only the default network created by this instance's Compose project is in scope.
+    network='-'
+    project=$(docker container inspect --format '{{with index .Config.Labels "com.docker.compose.project"}}{{.}}{{end}}' "$cid")
+    if [ -n "$project" ]; then
+        networks=$(docker container inspect --format '{{range $n, $_ := .NetworkSettings.Networks}}{{println $n}}{{end}}' "$cid")
+        for net in $networks; do
+            owner=$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}|{{index .Labels "com.docker.compose.network"}}' "$net")
+            if [ "$owner" = "$project|default" ]; then
+                network=$(docker network inspect --format '{{.Id}}' "$net")
+            fi
+        done
+    fi
+    record="$cid|$image|$ref|$volume|$stamp|$network"
+}
+
+resume=false
+if volume_exists "$journal"; then
+    resume=true
+    record=$(read_journal)
+    IFS='|' read -r cid image ref volume stamp network <<STATE
+$record
+STATE
+    case "$cid" in ''|*[!0-9a-f]*) fail '无效的卸载记录。';; esac
+    [ "${#cid}" -eq 64 ] && [ "${#image}" -eq 71 ] && [ -n "$ref" ] && [ -n "$network" ] || fail '无效的卸载记录。'
+    case "${image#sha256:}" in *[!0-9a-f]*|'') fail '无效的镜像记录。';; esac
+    case "$volume" in ''|[!a-zA-Z0-9]*|*[!a-zA-Z0-9_.-]*|"$journal") fail '无效的数据卷记录。';; esac
+    case "$network" in -) ;; *[!0-9a-f]*) fail '无效的网络记录。';; *) [ "${#network}" -eq 64 ] || fail '无效的网络记录。';; esac
+    case "$stamp" in local:local:0:?*) ;; *) fail '无效的数据卷记录。';; esac
+else
+    prepare
+fi
+
+printf 'Docker 容器：%s (%s)\n数据卷：%s（含全部论文、账号与密钥）\n镜像：%s（独占时删除，含程序和 amp）\n' "$name" "$cid" "$volume" "$ref"
+if [ "$network" != '-' ]; then echo "Compose 网络：${network}（独占时删除）"; fi
+printf '以上资源将被永久删除。输入 yes 确认：'
+if ! IFS= read -r reply || [ "$reply" != yes ]; then echo '已取消。'; exit 0; fi
+
+if ! "$resume"; then
+    original=$record
+    prepare
+    [ "$record" = "$original" ] || fail '实例在确认期间已变更，请重新运行。'
+    docker volume create --label "$label=$record" "$journal" >/dev/null
+fi
+[ "$(read_journal)" = "$record" ] || fail '卸载记录已变更，请重新检查实例。'
+echo '若操作中断，可重新运行相同命令继续卸载。'
+check_data() {
+    if volume_exists "$volume"; then
+        [ "$(volume_stamp "$volume")" = "$stamp" ] || fail "数据卷 $volume 已被替换。"
+        users=$(volume_users "$volume")
+        [ -z "$users" ] || [ "$users" = "$cid" ] || fail "数据卷 $volume 正由其他容器使用。"
+    fi
+}
+check_data
+existing=$(docker ps -a --no-trunc --filter "id=$cid" --format '{{.ID}}')
+if [ "$existing" = "$cid" ]; then
+    original=$record
+    prepare
+    [ "$record" = "$original" ] || fail '容器、数据卷或镜像已变更，请核对卸载记录。'
+    docker stop -t 45 "$cid" >/dev/null
+    docker rm "$cid" >/dev/null
+fi
+if volume_exists "$volume"; then
+    check_data
+    docker volume rm "$volume"
+fi
+
+if [ "$network" != '-' ]; then
+    existing=$(docker network ls --no-trunc --filter "id=$network" --format '{{.ID}}')
+    if [ "$existing" = "$network" ]; then
+        netname=$(docker network inspect --format '{{.Name}}' "$network")
+        users=$(docker ps -a --filter "network=$netname" --format '{{.ID}}')
+        if [ -z "$users" ]; then docker network rm "$network"; else echo '保留共享 Compose 网络。'; fi
+    fi
+fi
+images=$(docker image ls -a --no-trunc --format '{{.ID}}')
+if printf '%s\n' "$images" | grep -Fxq -- "$image"; then
+    users=$(docker ps -a --filter "ancestor=$image" --format '{{.ID}}')
+    tags=$(docker image inspect --format '{{range .RepoTags}}{{println .}}{{end}}' "$image")
+    # Address the immutable ID. Never force-delete a tag reused by another deployment.
+    if [ -z "$users" ] && { [ -z "$tags" ] || [ "$tags" = "$ref" ] || [ "$tags" = "$ref:latest" ]; }; then
+        docker image rm "$image"
+    else
+        echo "保留其他容器或镜像标签共用的镜像 ${image}。"
+    fi
+fi
+docker volume rm "$journal" >/dev/null
+echo "已卸载 ${name}。"

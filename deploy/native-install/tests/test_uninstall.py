@@ -5,11 +5,14 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
+sys.path.insert(0, str(INSTALLER.parent))
+from install import publish_commands
 
 
 class UninstallTests(unittest.TestCase):
@@ -56,12 +59,7 @@ class UninstallTests(unittest.TestCase):
             answers=answers,
         )
 
-    def add_service(self, stop_code=0):
-        release = self.root / "releases" / "personal"
-        release.mkdir(parents=True)
-        (self.root / "current").symlink_to(
-            "releases/personal", target_is_directory=True
-        )
+    def add_data(self):
         data = self.root / "data"
         (data / "database").mkdir(parents=True)
         (data / "run").mkdir(mode=0o700)
@@ -74,6 +72,13 @@ class UninstallTests(unittest.TestCase):
                 }
             )
         )
+        return data
+
+    def add_service(self, stop_code=0):
+        data = self.add_data()
+        release = self.root / "releases" / "personal"
+        release.mkdir(parents=True)
+        (self.root / "current").symlink_to("releases/personal", target_is_directory=True)
         (self.root / "bin").mkdir()
         amp = self.root / "bin" / "amp"
         amp.write_text(
@@ -86,6 +91,47 @@ class UninstallTests(unittest.TestCase):
         amp.chmod(0o700)
         self.link.symlink_to(amp)
         return data
+
+    def test_installed_amp_requires_yes_then_removes_its_instance_and_custom_link(self):
+        self.add_data()
+        release = self.root / "releases/personal"
+        runtime = release / "runtime/bin"
+        runtime.mkdir(parents=True)
+        (runtime / "python").symlink_to(sys.executable)
+        (release / "environment.json").write_text(json.dumps({"HOME": str(self.root / "home")}))
+        app = release / "backend/app"
+        app.mkdir(parents=True)
+        (app / "amp.py").write_text(
+            "import sys\nfrom pathlib import Path\n"
+            "assert sys.argv[1:] == ['stop']\n"
+            f"Path({str(self.stop_log)!r}).write_text('stopped')\n"
+            "print('{\"server\":\"stopped\"}')\n"
+        )
+        amp = publish_commands(self.root, release, self.bin_dir)
+
+        def invoke(entry, args, answer):
+            return subprocess.run(
+                [entry, "uninstall", *args], input=answer, text=True, capture_output=True,
+                cwd=self.sandbox, env={"HOME": str(self.home), "PATH": os.defpath}, timeout=15,
+            )
+
+        for args, answer in (([], ""), ([], "\n"), ([], "YES\n"), ([], "no\n"),
+                             ([], f"{self.root}\n"), (["--yes"], "yes\n"), (["--help"], "")):
+            with self.subTest(args=args, answer=answer):
+                result = invoke(amp, args, answer)
+                if not args:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("yes", result.stdout)
+                    self.assertIn(str(self.root), result.stdout)
+                self.assertFalse(self.stop_log.exists())
+                self.assertTrue(self.link.is_symlink())
+                self.assertTrue(self.cached.exists())
+
+        result = invoke(self.link, [], "yes\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.stop_log.read_text(), "stopped")
+        self.assertFalse(self.root.exists())
+        self.assertFalse(self.link.is_symlink())
 
     def test_partial_install_can_be_deleted_without_bootstrap_download(self):
         result = self.remove()

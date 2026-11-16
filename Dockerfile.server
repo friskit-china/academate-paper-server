@@ -59,9 +59,11 @@ RUN test "$(pnpm --version)" = "11.19.0" \
 FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648 AS tls-proxy
 
 FROM backend-runtime AS server
+LABEL org.opencontainers.image.title="AcadeMate Paper Server"
 COPY --from=tls-proxy /usr/bin/caddy /usr/local/bin/caddy
 RUN /usr/local/bin/caddy version
 COPY --chmod=0755 backend/scripts/amp /usr/local/bin/amp
+COPY --chmod=0755 amp /usr/local/share/academate-paper/amp
 COPY --from=web-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=web-builder --chown=appuser:appuser /web/.next/standalone /opt/academate-web
 COPY --from=web-builder --chown=appuser:appuser /web/.next/static /opt/academate-web/.next/static

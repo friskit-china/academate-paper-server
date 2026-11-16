@@ -1,6 +1,7 @@
 # Root-context Server builds must never send deployment secrets or private product data.
 *
 !Dockerfile.server
+!amp
 !backend/
 !backend/**
 !frontend/

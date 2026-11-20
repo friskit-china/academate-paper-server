@@ -6,13 +6,14 @@ import hashlib
 from typing import Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from sqlalchemy import and_, delete, exists, select, update
+from sqlalchemy import and_, delete, exists, func, select, update
 from sqlalchemy.orm import Session
 
-from app.domain.arxiv import normalize_arxiv_identifier
+from app.domain.arxiv import ArxivIdentifier, normalize_arxiv_identifier
 from app.domain.auth import Permission, RequestPrincipal
 from app.domain.enums import TaskStatus
 from app.domain.tasks import TaskVisibility
+from app.infrastructure.arxiv.versions import ArxivVersionIndex
 from app.infrastructure.db.library_models import (
     LibraryEntryModel,
     LibraryGrantModel,
@@ -307,6 +308,52 @@ def revoke_grant(
     return library
 
 
+def _load_import_receipt(
+    session: Session,
+    principal: RequestPrincipal,
+    library_id: str,
+    key_hash: str | None,
+    request_hash: str,
+) -> LibraryItemModel | None:
+    if not key_hash:
+        return None
+    previous = session.get(LibraryImportKeyModel, (library_id, principal.user_id, key_hash))
+    if previous is None:
+        return None
+    if previous.request_hash != request_hash:
+        raise LibraryError("IDEMPOTENCY_CONFLICT", 409)
+    item = session.get(LibraryItemModel, previous.library_item_id)
+    if item is None:
+        raise LibraryError("LIBRARY_ITEM_NOT_FOUND")
+    return item
+
+
+def has_library_import_receipt(
+    session: Session,
+    principal: RequestPrincipal,
+    library_id: str,
+    identifier: ArxivIdentifier,
+    idempotency_key: str,
+) -> bool:
+    require_library(session, principal, library_id, "import")
+    return _load_import_receipt(
+        session,
+        principal,
+        library_id,
+        hashlib.sha256(idempotency_key.encode()).hexdigest(),
+        hashlib.sha256(identifier.canonical.encode()).hexdigest(),
+    ) is not None
+
+
+def resolve_arxiv_import_version(identifier: ArxivIdentifier, versions: ArxivVersionIndex) -> str:
+    if identifier.version:
+        return identifier.version
+    latest = versions.lookup(identifier.arxiv_id, check=True, require_fresh=True)
+    if latest is None:
+        raise LibraryError("ARXIV_VERSION_UNAVAILABLE", 503)
+    return latest.version
+
+
 def import_into_library(
     session: Session,
     principal: RequestPrincipal,
@@ -314,26 +361,23 @@ def import_into_library(
     source: str,
     *,
     idempotency_key: str | None = None,
+    resolved_version: str | None = None,
 ) -> tuple[LibraryItemModel, bool]:
     require_library(session, principal, library_id, "import")
     identifier = normalize_arxiv_identifier(source)
     request_hash = hashlib.sha256(identifier.canonical.encode()).hexdigest()
     key_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key else None
-    if key_hash:
-        previous = session.get(LibraryImportKeyModel, (library_id, principal.user_id, key_hash))
-        if previous:
-            if previous.request_hash != request_hash:
-                raise LibraryError("IDEMPOTENCY_CONFLICT", 409)
-            item = session.get(LibraryItemModel, previous.library_item_id)
-            if item is None:
-                raise LibraryError("LIBRARY_ITEM_NOT_FOUND")
-            # A replay never re-adds an entry removed after the original request.
-            return item, False
+    previous = _load_import_receipt(session, principal, library_id, key_hash, request_hash)
+    if previous is not None:
+        # A replay never re-adds an entry removed after the original request.
+        return previous, False
+    if not identifier.version and resolved_version:
+        identifier = ArxivIdentifier(arxiv_id=identifier.arxiv_id, version=resolved_version)
     paper = session.scalar(
         select(PaperModel).where(
-            PaperModel.arxiv_id == identifier.arxiv_id,
+            func.lower(PaperModel.arxiv_id) == identifier.arxiv_id.lower(),
             PaperModel.arxiv_version == identifier.version,
-        )
+        ).order_by((PaperModel.arxiv_id == identifier.arxiv_id).desc(), PaperModel.id)
     )
     if paper is None:
         paper = PaperModel(

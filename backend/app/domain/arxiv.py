@@ -57,3 +57,10 @@ def normalize_arxiv_identifier(value: str) -> ArxivIdentifier:
         archive, number = base.split("/", 1)
         base = f"{archive}/{number}"
     return ArxivIdentifier(arxiv_id=base, version=version)
+
+
+def arxiv_version_number(version: str) -> int:
+    """Known explicit editions sort numerically before historical unversioned records."""
+    if re.fullmatch(r"v[1-9][0-9]{0,14}", version):
+        return int(version[1:])
+    return 0

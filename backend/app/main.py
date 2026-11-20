@@ -32,6 +32,8 @@ from app.application.web_sessions import (
 )
 from app.config import RuntimeConfigurationError, Settings, get_settings
 from app.domain.runtime import IdentityMode, StorageProfile, TaskQueueProfile
+from app.infrastructure.arxiv import ArxivClient
+from app.infrastructure.arxiv.versions import ArxivVersionIndex
 from app.infrastructure.credentials import (
     CredentialAdapterError,
     CredentialAdapterFactory,
@@ -232,6 +234,15 @@ def create_app(
         )
     app.state.engine = engine
     app.state.session_factory = session_factory
+    arxiv_metadata = ArxivClient(
+        api_base=application_settings.arxiv_api_base,
+        source_base=application_settings.arxiv_source_base,
+        user_agent=application_settings.arxiv_user_agent,
+        timeout_seconds=min(application_settings.arxiv_timeout_seconds, 6),
+        metadata_max_bytes=min(application_settings.arxiv_metadata_max_bytes, 512_000),
+        metadata_request_interval_seconds=0,  # ArxivVersionIndex serializes and paces OAI calls.
+    )
+    app.state.arxiv_versions = ArxivVersionIndex(arxiv_metadata.fetch_latest_version)
     app.state.storage = storage
     app.state.task_queue = task_queue
     if runtime_profile.identity_mode is IdentityMode.AUTHENTICATED:

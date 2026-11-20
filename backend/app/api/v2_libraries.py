@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.api.dependencies import resolve_request_principal
 from app.application.libraries import (
@@ -17,15 +18,21 @@ from app.application.libraries import (
     advance_revision,
     create_library,
     ensure_default_library,
+    has_library_import_receipt,
     import_into_library,
     library_access_predicate,
     load_accessible_library_item,
     remove_entry,
     require_library,
+    resolve_arxiv_import_version,
     revoke_grant,
     set_grant,
 )
-from app.domain.arxiv import InvalidArxivIdentifier
+from app.domain.arxiv import (
+    InvalidArxivIdentifier,
+    arxiv_version_number,
+    normalize_arxiv_identifier,
+)
 from app.domain.auth import Permission, RequestPrincipal
 from app.infrastructure.db.library_models import LibraryEntryModel, LibraryGrantModel, LibraryModel
 from app.infrastructure.db.models import LibraryItemModel, PaperModel, ProcessingTaskModel
@@ -97,6 +104,12 @@ class LibraryItemResponse(BaseModel):
 class LibraryItemPage(BaseModel):
     items: list[LibraryItemResponse]
     next_cursor: str | None
+
+
+class ArxivVersionsResponse(BaseModel):
+    latest_version: str | None
+    checked_at: datetime | None
+    versions: list[LibraryItemResponse]
 
 
 class LibraryImportResponse(BaseModel):
@@ -396,6 +409,75 @@ def list_items(
         _error(error)
 
 
+@router.get(
+    "/libraries/{library_id}/items/{item_id}/arxiv-versions",
+    response_model=ArxivVersionsResponse,
+)
+def get_arxiv_versions(
+    library_id: str, item_id: str, request: Request, check: bool = False,
+):
+    principal = _principal(request)
+
+    def read_editions():
+        with request.app.state.session_factory() as session:
+            require_library(session, principal, library_id)
+            items = (
+                select(LibraryItemModel)
+                .join(PaperModel, LibraryItemModel.paper_id == PaperModel.id)
+                .join(LibraryEntryModel, LibraryEntryModel.library_item_id == LibraryItemModel.id)
+                .where(
+                    LibraryEntryModel.library_id == library_id,
+                    LibraryItemModel.workspace_id == principal.active_workspace_id,
+                )
+            )
+            current = session.scalar(items.where(LibraryItemModel.id == item_id))
+            if current is None:
+                raise LibraryError("LIBRARY_ITEM_NOT_FOUND")
+            arxiv_id = current.paper.arxiv_id
+            rows = session.scalars(
+                items.where(func.lower(PaperModel.arxiv_id) == arxiv_id.lower())
+            ).all()
+            if not any(row.id == item_id for row in rows):
+                raise LibraryError("LIBRARY_ITEM_NOT_FOUND")
+            return arxiv_id, [_item_response(session, row, library_id) for row in rows]
+
+    try:
+        arxiv_id, versions = read_editions()
+        try:
+            base = normalize_arxiv_identifier(arxiv_id)
+        except InvalidArxivIdentifier:
+            base = None  # Historic records may have identifiers arXiv no longer accepts.
+        known = (
+            request.app.state.arxiv_versions.lookup(base.arxiv_id, check=check)
+            if base is not None and not base.version
+            else None
+        )
+        if check and base is not None and not base.version:
+            # Network checks run outside the DB session. Check the current grant and
+            # entries again before releasing a result from the earlier snapshot.
+            confirmed_arxiv_id, versions = read_editions()
+            if confirmed_arxiv_id.casefold() != arxiv_id.casefold():
+                known = None
+    except LibraryError as error:
+        _error(error)
+
+    versions.sort(
+        key=lambda version: (
+            -arxiv_version_number(version["arxiv_version"]),
+            version["id"],
+        )
+    )
+    latest = max(
+        (known.version if known else "", versions[0]["arxiv_version"]),
+        key=arxiv_version_number,
+    )
+    return ArxivVersionsResponse(
+        latest_version=latest if arxiv_version_number(latest) else None,
+        checked_at=known.checked_at if known else None,
+        versions=versions,
+    )
+
+
 @router.post(
     "/libraries/{library_id}/imports", status_code=202, response_model=LibraryImportResponse,
 )
@@ -407,14 +489,29 @@ def import_item(
 ):
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(428, detail={"code": "IDEMPOTENCY_KEY_REQUIRED"})
+    principal = _principal(request)
     try:
+        identifier = normalize_arxiv_identifier(payload.source)
+        resolved_version = None
+        if not identifier.version:
+            # Authorize and check historical receipts before upstream I/O. No database
+            # transaction is held during the metadata request.
+            with request.app.state.session_factory() as session:
+                replay = has_library_import_receipt(
+                    session, principal, library_id, identifier, idempotency_key
+                )
+            if not replay:
+                resolved_version = resolve_arxiv_import_version(
+                    identifier, request.app.state.arxiv_versions
+                )
         with request.app.state.session_factory() as session:
             item, created = import_into_library(
                 session,
-                _principal(request),
+                principal,
                 library_id,
                 payload.source,
                 idempotency_key=idempotency_key,
+                resolved_version=resolved_version,
             )
             jobs = session.scalars(
                 select(ProcessingTaskModel.id).where(

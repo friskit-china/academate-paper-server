@@ -283,6 +283,13 @@ class V2ContractMiddleware:
         replayable,
     ):
         payload = None
+        import_preflight_failed = False
+        if replayable and allow_import_item_growth and status_code == 503:
+            with suppress(ValueError, UnicodeError):
+                error = json.loads(body)
+                import_preflight_failed = (
+                    isinstance(error, dict) and error.get("code") == "ARXIV_VERSION_UNAVAILABLE"
+                )
         if replayable and 200 <= status_code < 300:
             try:
                 payload = json.loads(body)
@@ -315,6 +322,12 @@ class V2ContractMiddleware:
             # routes may advance the item digest, with every prior entry and all original
             # policy retained. Never rebind after revocation, removal or self-grant changes.
             unchanged = current.digest == record.authorization_digest
+            if import_preflight_failed and unchanged:
+                # The version lookup failed before the import transaction. Only this
+                # precise preflight result can release a reservation for a safe retry.
+                session.delete(record)
+                session.commit()
+                return
             import_growth = (
                 allow_import_item_growth
                 and record.authorization_digest == reservation.digest

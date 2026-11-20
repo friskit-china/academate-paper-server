@@ -15,7 +15,7 @@ from html.parser import HTMLParser
 from math import ceil
 from urllib.parse import urlparse
 
-from app.domain.arxiv import ArxivIdentifier
+from app.domain.arxiv import ArxivIdentifier, arxiv_version_number
 
 
 class ArxivClientError(RuntimeError):
@@ -72,6 +72,9 @@ SourceProgressCallback = Callable[[SourceDownloadProgress, bytes, bool], None]
 
 _ALLOWED_RESPONSE_HOSTS = {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}
 _ATOM = "{http://www.w3.org/2005/Atom}"
+_OAI = "{http://www.openarchives.org/OAI/2.0/}"
+_ARXIV_RAW = "{http://arxiv.org/OAI/arXivRaw/}"
+_ARXIV_OAI_HOST = "oaipmh.arxiv.org"
 _CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+)", re.IGNORECASE)
 _SOURCE_RANGE_CHUNK_BYTES = 1024 * 1024
 
@@ -174,9 +177,9 @@ class ArxivClient:
         return size
 
     @staticmethod
-    def _validate_response_host(response: object) -> None:
+    def _validate_response_host(response: object, allowed_host: str | None = None) -> None:
         final_host = (urlparse(response.geturl()).hostname or "").lower()  # type: ignore[attr-defined]
-        if final_host not in _ALLOWED_RESPONSE_HOSTS:
+        if final_host not in ({allowed_host} if allowed_host else _ALLOWED_RESPONSE_HOSTS):
             raise ArxivClientError("arXiv redirected to an unexpected host.")
 
     @staticmethod
@@ -215,7 +218,9 @@ class ArxivClient:
             )
         return b"".join(chunks)
 
-    def _download(self, url: str, max_bytes: int) -> tuple[bytes, str]:
+    def _download(
+        self, url: str, max_bytes: int, *, allowed_host: str | None = None,
+    ) -> tuple[bytes, str]:
         request = urllib.request.Request(
             url,
             headers={"User-Agent": self.user_agent, "Accept": "*/*"},
@@ -226,7 +231,7 @@ class ArxivClient:
             self._wait_for_metadata_request(retry_delay_seconds)
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                    self._validate_response_host(response)
+                    self._validate_response_host(response, allowed_host)
                     content = self._read_response(response, max_bytes)
                     return content, response.headers.get_content_type()
             except ArxivClientError:
@@ -550,6 +555,39 @@ class ArxivClient:
             authors=parser.values.get("citation_author", []),
             canonical_url=canonical_url,
         )
+
+    def fetch_latest_version(self, arxiv_id: str) -> str:
+        # arXivRaw exposes numbered editions even when Atom entry IDs omit the suffix.
+        query = urllib.parse.urlencode({
+            "verb": "GetRecord",
+            "identifier": f"oai:arXiv.org:{arxiv_id}",
+            "metadataPrefix": "arXivRaw",
+        })
+        content, _ = self._download(
+            f"https://{_ARXIV_OAI_HOST}/oai?{query}",
+            self.metadata_max_bytes,
+            allowed_host=_ARXIV_OAI_HOST,
+        )
+        return self._parse_latest_version(content, arxiv_id)
+
+    @staticmethod
+    def _parse_latest_version(content: bytes, arxiv_id: str) -> str:
+        try:
+            root = ET.fromstring(content)
+        except ET.ParseError as error:
+            raise ArxivClientError("arXiv returned invalid version history.") from error
+        record = root.find(f"{_OAI}GetRecord/{_OAI}record")
+        metadata = None if record is None else record.find(f"{_OAI}metadata/{_ARXIV_RAW}arXivRaw")
+        if metadata is None:
+            raise ArxivClientError("arXiv returned no version history.")
+        returned_id = metadata.findtext(f"{_ARXIV_RAW}id", "").strip()
+        if returned_id.casefold() != arxiv_id.casefold():
+            raise ArxivClientError("arXiv returned version history for another paper.")
+        versions = (entry.get("version", "") for entry in metadata.findall(f"{_ARXIV_RAW}version"))
+        latest = max(versions, key=arxiv_version_number, default="")
+        if not arxiv_version_number(latest):
+            raise ArxivClientError("arXiv returned no explicit version.")
+        return latest
 
     def fetch_metadata(self, identifier: ArxivIdentifier) -> ArxivMetadata:
         if time.monotonic() < self._metadata_api_cooldown_until:

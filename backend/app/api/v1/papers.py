@@ -24,6 +24,8 @@ from app.application.libraries import (
     import_into_library,
     library_access_predicate,
     library_item_access_predicate,
+    require_library,
+    resolve_arxiv_import_version,
 )
 from app.application.paper_maps import (
     ANSWER_MAP_QUESTION,
@@ -61,7 +63,7 @@ from app.application.translations import (
     schedule_remaining_paper_translations,
     translation_task_scope_for_base_prompt,
 )
-from app.domain.arxiv import InvalidArxivIdentifier
+from app.domain.arxiv import InvalidArxivIdentifier, normalize_arxiv_identifier
 from app.domain.auth import Permission, RequestPrincipal
 from app.domain.enums import ProcessingHealth, TaskStatus, TranslationStatus
 from app.domain.os_adapters import toolchain_cache_identity
@@ -867,9 +869,21 @@ def import_paper(
 ) -> ImportPaperResponse:
     principal = require_request_permission(request, Permission.LIBRARY_WRITE)
     try:
+        resolved_version = None
+        if request.url.path.startswith("/api/v2/"):
+            identifier = normalize_arxiv_identifier(payload.source)
+            if not identifier.version:
+                with request.app.state.session_factory() as session:
+                    library = ensure_default_library(session, principal)
+                    require_library(session, principal, library.id, "import")
+                resolved_version = resolve_arxiv_import_version(
+                    identifier, request.app.state.arxiv_versions
+                )
         with request.app.state.session_factory() as session:
             library = ensure_default_library(session, principal)
-            item, created = import_into_library(session, principal, library.id, payload.source)
+            item, created = import_into_library(
+                session, principal, library.id, payload.source, resolved_version=resolved_version
+            )
             paper_id = item.paper_id
             session.commit()
     except InvalidArxivIdentifier as error:
@@ -2515,36 +2529,31 @@ def get_block_render_asset(
                 None,
             )
 
-        if block.block_type in {"TABLE", "FIGURE", "ALGORITHM", "LATEX_BLOCK"}:
-            render_key = (
-                "figure_render"
-                if block.block_type == "FIGURE"
-                else "table_render"
-                if block.block_type == "TABLE"
-                else "latex_block_render"
-            )
+        direct_render = {
+            "FIGURE": ("figure_render", "figures"),
+            "TABLE": ("table_render", "tables"),
+            "ALGORITHM": ("latex_block_render", "latex-blocks"),
+            "LATEX_BLOCK": ("latex_block_render", "latex-blocks"),
+        }.get(block.block_type)
+        asset = None
+        asset_directory = "formulas"
+        if direct_render is not None:
+            render_key, direct_directory = direct_render
             render_state = render_payload.get(render_key, {})
             recorded_asset = render_state.get("asset") if isinstance(render_state, dict) else None
-            if (
-                isinstance(recorded_asset, dict)
-                and recorded_asset.get("path") == asset_name
-                and toolchain_fingerprint is not None
-                and render_state.get("toolchain_fingerprint") != toolchain_fingerprint
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Rendered block asset belongs to an older toolchain.",
-                )
-            asset = render_state.get("asset", {}) if isinstance(render_state, dict) else {}
-            asset_directory = (
-                "figures"
-                if block.block_type == "FIGURE"
-                else "tables"
-                if block.block_type == "TABLE"
-                else "latex-blocks"
-            )
-        else:
-            asset = recorded_formula_asset(render_payload) or {}
+            if isinstance(recorded_asset, dict) and recorded_asset.get("path") == asset_name:
+                if (
+                    toolchain_fingerprint is not None
+                    and render_state.get("toolchain_fingerprint") != toolchain_fingerprint
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Rendered block asset belongs to an older toolchain.",
+                    )
+                asset = recorded_asset
+                asset_directory = direct_directory
+        if asset is None:
+            asset = recorded_formula_asset(render_payload)
             if not asset:
                 for translation in (
                     item
@@ -2558,10 +2567,9 @@ def get_block_render_asset(
                         )
                     )
                 ):
-                    asset = recorded_formula_asset(translation.translated_payload_json) or {}
+                    asset = recorded_formula_asset(translation.translated_payload_json)
                     if asset:
                         break
-            asset_directory = "formulas"
         if not isinstance(asset, dict) or asset.get("path") != asset_name:
             raise HTTPException(status_code=404, detail="Rendered block asset not found.")
         mime_type = str(asset.get("mime_type", ""))

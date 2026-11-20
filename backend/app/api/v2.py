@@ -166,10 +166,12 @@ def asset_content(asset_id: str, request: Request) -> Response:
 
 
 def build_api_v2_router() -> APIRouter:
+    from app.api.v2_annotation_migrations import router as annotation_migrations
     from app.api.v2_auth import router as auth
     from app.api.v2_health import router as health
     from app.api.v2_jobs import router as jobs
     from app.api.v2_libraries import router as libraries
+    from app.api.v2_offline import router as offline
     from app.api.v2_registration import router as registration
     from app.api.v2_server import router as server
     from app.api.v2_sync import router as sync
@@ -195,7 +197,9 @@ def build_api_v2_router() -> APIRouter:
         settings_router,
         papers_router,
         annotations_router,
+        annotation_migrations,
         paper_maps_router,
+        offline,
         resources,
     ):
         include_versioned(result, source)

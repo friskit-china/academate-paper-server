@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import require_request_permission, resolve_request_principal
@@ -471,8 +471,10 @@ def create_annotation(
         AnnotationTarget.TRANSLATION,
     }:
         raise HTTPException(status_code=422, detail="Annotations require a text range target.")
-    body = payload.body.strip()
-    initial_comment = (payload.initial_comment or "").strip()
+    body = payload.body if is_paper_note else payload.body.strip()
+    initial_comment = payload.initial_comment or ""
+    if not initial_comment.strip():
+        initial_comment = ""
     initial_question = (payload.initial_question or "").strip()
     if (
         payload.annotation_type == AnnotationType.USER_NOTE
@@ -483,7 +485,7 @@ def create_annotation(
     if payload.annotation_type == AnnotationType.AI_QUESTION and not body:
         raise HTTPException(status_code=422, detail="Questions require text.")
     if payload.annotation_type == AnnotationType.USER_NOTE and not (
-        initial_comment or (is_paper_note and body)
+        initial_comment or (is_paper_note and body.strip())
     ):
         raise HTTPException(status_code=422, detail="Notes require comment text.")
     if not is_anchor_request and (initial_comment or initial_question):
@@ -747,10 +749,33 @@ def update_annotation(
             or annotation.creator_type != "USER"
         ):
             raise HTTPException(status_code=409, detail="Only user annotations can be edited.")
-        if annotation.revision != payload.revision:
+        reserved = session.execute(
+            update(AnnotationModel)
+            .where(
+                AnnotationModel.id == annotation.id,
+                AnnotationModel.revision == payload.revision,
+                AnnotationModel.deleted_at.is_(None),
+            )
+            .values(revision=AnnotationModel.revision + 1)
+            .execution_options(synchronize_session=False)
+        )
+        if reserved.rowcount != 1:
             raise HTTPException(
                 status_code=409, detail="The annotation was changed by another request."
             )
+        if (
+            annotation.target == AnnotationTarget.PAPER
+            and annotation.annotation_type == AnnotationType.USER_NOTE
+        ):
+            if payload.is_highlighted:
+                raise HTTPException(status_code=422, detail="PAPER comments cannot be highlighted.")
+            if payload.body is not None:
+                if not payload.body.strip():
+                    raise HTTPException(status_code=422, detail="Notes require comment text.")
+                annotation.body = payload.body
+            session.commit()
+            session.refresh(annotation)
+            return _response(annotation)
         is_highlighted = (
             annotation.is_highlighted if payload.is_highlighted is None else payload.is_highlighted
         )
@@ -761,8 +786,8 @@ def update_annotation(
             principal.user_id,
         )
         if payload.body is not None:
-            legacy_body = payload.body.strip()
-            if legacy_body:
+            legacy_body = payload.body
+            if legacy_body.strip():
                 if comments:
                     comments[0].body = legacy_body
                     comments[0].revision += 1
@@ -781,7 +806,6 @@ def update_annotation(
         annotation.body = ""
         annotation.is_highlighted = is_highlighted
         annotation.annotation_type = AnnotationType.ANNOTATION
-        annotation.revision += 1
         _prune_empty_anchor(session, annotation)
         session.commit()
         session.refresh(annotation)
